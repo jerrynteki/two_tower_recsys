@@ -17,6 +17,42 @@ similarity matrix. Entry `(i, i)` is the observed positive pair; other items in
 the batch act as negatives for user `i`. Cross entropy therefore uses
 `[0, 1, ..., B-1]` as its labels.
 
+## Code walkthrough
+
+Read the implementation in dependency order:
+
+1. [`preprocess.py`](preprocess.py) loads MovieLens, keeps positive implicit
+   feedback, maps raw IDs to contiguous indices, and creates chronological
+   train, validation, and test splits.
+2. [`datasets.py`](datasets.py) loads the processed user-item pairs and exposes
+   them as PyTorch tensors for a `DataLoader`.
+3. [`models/two_tower.py`](models/two_tower.py) defines the independent user
+   and item encoders, normalized embeddings, and in-batch similarity matrix.
+4. [`training/train.py`](training/train.py) connects the data and model, builds
+   diagonal cross-entropy labels, optimizes the towers, and saves a checkpoint.
+5. [`tests/test_two_tower.py`](tests/test_two_tower.py) verifies embedding
+   shapes, normalization, and the in-batch objective.
+
+```text
+MovieLens interactions
+        |
+        v
+preprocess.py -> processed CSV files
+        |
+        v
+datasets.py -> DataLoader batches
+        |
+        v
+models/two_tower.py -> user and item embeddings
+        |
+        v
+training/train.py -> trained checkpoint
+```
+
+When reading each file, ask: What does it receive? What transformation does it
+perform? What does it return or save? Which later component consumes that
+output?
+
 ## Setup
 
 ```bash
@@ -67,4 +103,3 @@ creating temporal leakage and overly optimistic offline metrics.
 An embedding row has meaning only under the mapping used during training. The
 same mappings must be reused in validation and serving, so they are model
 artifacts rather than temporary preprocessing details.
-
