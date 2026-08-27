@@ -1,25 +1,60 @@
 # MovieLens Two-Tower Retrieval
 
-A seven-day learning project that grows from chronological interaction data to
-a PyTorch two-tower model, retrieval evaluation, negative-sampling experiments,
-side features, and ANN serving.
+A from-scratch PyTorch implementation of two-tower candidate retrieval on
+MovieLens 100K. The repository covers chronological data splitting, contiguous
+ID mappings, normalized user/item embeddings, and in-batch-negative training.
 
-## Day 1: data pipeline
+## Architecture
 
-The first pipeline treats MovieLens ratings of 4 or 5 as positive implicit
-feedback. Raw user and movie IDs are mapped to contiguous embedding indices.
-For every user with at least three positive interactions, the latest event is
-held out for test, the previous event for validation, and all earlier events
-for training.
+```text
+user_idx -> UserTower -> user embedding ---+
+                                             +-> similarity matrix -> cross entropy
+movie_idx -> ItemTower -> item embedding ---+
+```
 
-Run from the project root:
+For a batch of `B` positive user-item pairs, the model produces a `B x B`
+similarity matrix. Entry `(i, i)` is the observed positive pair; other items in
+the batch act as negatives for user `i`. Cross entropy therefore uses
+`[0, 1, ..., B-1]` as its labels.
+
+## Setup
 
 ```bash
+python3 -m venv .venv
 source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+## Run the pipeline
+
+Prepare the data:
+
+```bash
 python preprocess.py
 ```
 
-The reusable outputs are written to `data/processed/`.
+Train the model:
+
+```bash
+python -m training.train --epochs 5
+```
+
+Run the tests:
+
+```bash
+python -m unittest discover -s tests
+```
+
+The training script automatically uses Apple Metal (`mps`) when available and
+otherwise falls back to CPU. It saves the model weights and configuration under
+`checkpoints/`.
+
+## Data pipeline
+
+Ratings of 4 or 5 are treated as positive implicit feedback. Raw user and movie
+IDs are mapped to contiguous embedding indices. For every user with at least
+three positive interactions, the latest event is held out for test, the
+previous event for validation, and all earlier events for training.
 
 ### Why chronological instead of random splitting?
 

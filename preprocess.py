@@ -116,7 +116,7 @@ def main() -> None:
     validate_split(train, val, test)
     save_processed_data(train, val, test, user2idx, movie2idx)
 
-    print("Day 1 preprocessing complete")
+    print("Preprocessing complete")
     print(f"users: {len(user2idx):,} | movies: {len(movie2idx):,}")
     print(f"train: {len(train):,} | val: {len(val):,} | test: {len(test):,}")
     print(f"artifacts: {OUTPUT_DIR.resolve()}")
@@ -124,4 +124,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
