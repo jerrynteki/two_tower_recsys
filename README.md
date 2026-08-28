@@ -30,8 +30,10 @@ Read the implementation in dependency order:
    and item encoders, normalized embeddings, and in-batch similarity matrix.
 4. [`training/train.py`](training/train.py) connects the data and model, builds
    diagonal cross-entropy labels, optimizes the towers, and saves a checkpoint.
-5. [`tests/test_two_tower.py`](tests/test_two_tower.py) verifies embedding
-   shapes, normalization, and the in-batch objective.
+5. [`evaluation/evaluate.py`](evaluation/evaluate.py) scores the full movie
+   catalog, filters training-seen items, and measures Top-K retrieval quality.
+6. [`tests/`](tests) verifies embedding behavior, the training objective,
+   seen-item filtering, and retrieval metrics.
 
 ```text
 MovieLens interactions
@@ -47,6 +49,9 @@ models/two_tower.py -> user and item embeddings
         |
         v
 training/train.py -> trained checkpoint
+        |
+        v
+evaluation/evaluate.py -> Recall@K and HitRate@K
 ```
 
 When reading each file, ask: What does it receive? What transformation does it
@@ -73,6 +78,12 @@ Train the model:
 
 ```bash
 python -m training.train --epochs 5
+```
+
+Evaluate full-catalog retrieval on the validation split:
+
+```bash
+python -m evaluation.evaluate --split val
 ```
 
 Run the tests:
