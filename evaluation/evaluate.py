@@ -27,6 +27,8 @@ def load_model(checkpoint_path: Path, device: torch.device) -> TwoTower:
         checkpoint["num_items"],
         embedding_dim=checkpoint["embedding_dim"],
         temperature=checkpoint["temperature"],
+        normalize_embeddings=checkpoint.get("normalize_embeddings", True),
+        similarity=checkpoint.get("similarity", "dot"),
     ).to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
@@ -63,7 +65,7 @@ def retrieve_topk(
         target_items = torch.tensor(batch["movie_idx"].to_numpy(), device=device)
 
         user_embeddings = model.user_tower(user_ids)
-        scores = user_embeddings @ item_embeddings.T
+        scores = model.score_embeddings(user_embeddings, item_embeddings)
         scores = mask_seen_items(scores, user_ids, seen_items)
         topk_items = scores.topk(max_k, dim=1).indices
 
@@ -113,4 +115,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

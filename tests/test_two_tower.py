@@ -26,7 +26,19 @@ class TwoTowerTest(unittest.TestCase):
         self.assertEqual(logits.shape, (3, 3))
         self.assertTrue(torch.isfinite(F.cross_entropy(logits, labels)))
 
+    def test_cosine_scoring_normalizes_raw_tower_outputs(self) -> None:
+        model = TwoTower(
+            num_users=5,
+            num_items=7,
+            embedding_dim=8,
+            normalize_embeddings=False,
+            similarity="cosine",
+        )
+        users, items = model(torch.tensor([0, 1]), torch.tensor([2, 3]))
+        actual = model.score_embeddings(users, items)
+        expected = F.normalize(users, dim=-1) @ F.normalize(items, dim=-1).T
+        self.assertTrue(torch.allclose(actual, expected))
+
 
 if __name__ == "__main__":
     unittest.main()
-

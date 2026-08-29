@@ -32,7 +32,9 @@ Read the implementation in dependency order:
    diagonal cross-entropy labels, optimizes the towers, and saves a checkpoint.
 5. [`evaluation/evaluate.py`](evaluation/evaluate.py) scores the full movie
    catalog, filters training-seen items, and measures Top-K retrieval quality.
-6. [`tests/`](tests) verifies embedding behavior, the training objective,
+6. [`experiments/run_model_experiments.py`](experiments/run_model_experiments.py)
+   compares representation and scoring choices under one controlled setup.
+7. [`tests/`](tests) verifies embedding behavior, the training objective,
    seen-item filtering, and retrieval metrics.
 
 ```text
@@ -52,6 +54,9 @@ training/train.py -> trained checkpoint
         |
         v
 evaluation/evaluate.py -> Recall@K and HitRate@K
+        |
+        v
+experiments/run_model_experiments.py -> comparison table
 ```
 
 When reading each file, ask: What does it receive? What transformation does it
@@ -84,6 +89,12 @@ Evaluate full-catalog retrieval on the validation split:
 
 ```bash
 python -m evaluation.evaluate --split val
+```
+
+Compare model configurations with the same seed, data, and optimizer:
+
+```bash
+python -m experiments.run_model_experiments --epochs 3
 ```
 
 Run the tests:

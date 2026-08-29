@@ -8,8 +8,14 @@ from torch.nn import functional as F
 class EmbeddingTower(nn.Module):
     """Convert a categorical ID into a normalized retrieval embedding."""
 
-    def __init__(self, num_entities: int, embedding_dim: int = 64) -> None:
+    def __init__(
+        self,
+        num_entities: int,
+        embedding_dim: int = 64,
+        normalize_embeddings: bool = True,
+    ) -> None:
         super().__init__()
+        self.normalize_embeddings = normalize_embeddings
         self.embedding = nn.Embedding(num_entities, embedding_dim)
         self.mlp = nn.Sequential(
             nn.Linear(embedding_dim, embedding_dim * 2),
@@ -19,7 +25,9 @@ class EmbeddingTower(nn.Module):
 
     def forward(self, entity_ids: torch.Tensor) -> torch.Tensor:
         vectors = self.mlp(self.embedding(entity_ids))
-        return F.normalize(vectors, p=2, dim=-1)
+        if self.normalize_embeddings:
+            return F.normalize(vectors, p=2, dim=-1)
+        return vectors
 
 
 class UserTower(EmbeddingTower):
@@ -39,13 +47,22 @@ class TwoTower(nn.Module):
         num_items: int,
         embedding_dim: int = 64,
         temperature: float = 0.07,
+        normalize_embeddings: bool = True,
+        similarity: str = "dot",
     ) -> None:
         super().__init__()
         if temperature <= 0:
             raise ValueError("temperature must be positive")
-        self.user_tower = UserTower(num_users, embedding_dim)
-        self.item_tower = ItemTower(num_items, embedding_dim)
+        if similarity not in {"dot", "cosine"}:
+            raise ValueError("similarity must be 'dot' or 'cosine'")
+        self.user_tower = UserTower(
+            num_users, embedding_dim, normalize_embeddings
+        )
+        self.item_tower = ItemTower(
+            num_items, embedding_dim, normalize_embeddings
+        )
         self.temperature = temperature
+        self.similarity = similarity
 
     def forward(
         self, user_ids: torch.Tensor, item_ids: torch.Tensor
@@ -57,5 +74,15 @@ class TwoTower(nn.Module):
     ) -> torch.Tensor:
         """Score every user against every positive item in the batch."""
         user_embeddings, item_embeddings = self(user_ids, positive_item_ids)
-        return user_embeddings @ item_embeddings.T / self.temperature
+        return self.score_embeddings(user_embeddings, item_embeddings) / self.temperature
 
+    def score_embeddings(
+        self,
+        user_embeddings: torch.Tensor,
+        item_embeddings: torch.Tensor,
+    ) -> torch.Tensor:
+        """Return every user-to-item similarity score."""
+        if self.similarity == "cosine":
+            user_embeddings = F.normalize(user_embeddings, p=2, dim=-1)
+            item_embeddings = F.normalize(item_embeddings, p=2, dim=-1)
+        return user_embeddings @ item_embeddings.T

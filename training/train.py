@@ -68,6 +68,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--embedding-dim", type=int, default=64)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--temperature", type=float, default=0.07)
+    parser.add_argument("--similarity", choices=("dot", "cosine"), default="dot")
+    parser.add_argument(
+        "--no-normalize",
+        action="store_false",
+        dest="normalize_embeddings",
+        help="disable L2 normalization at each tower output",
+    )
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -91,6 +98,8 @@ def main() -> None:
         num_items,
         embedding_dim=args.embedding_dim,
         temperature=args.temperature,
+        normalize_embeddings=args.normalize_embeddings,
+        similarity=args.similarity,
     ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
 
@@ -110,6 +119,8 @@ def main() -> None:
             "num_items": num_items,
             "embedding_dim": args.embedding_dim,
             "temperature": args.temperature,
+            "normalize_embeddings": args.normalize_embeddings,
+            "similarity": args.similarity,
         },
         args.output,
     )
@@ -118,4 +129,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

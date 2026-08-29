@@ -1,6 +1,7 @@
 .venv/
 .tools/
 checkpoints/
+artifacts/
 __pycache__/
 *.py[cod]
 .DS_Store
