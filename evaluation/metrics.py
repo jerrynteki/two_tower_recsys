@@ -27,19 +27,3 @@ def single_target_metrics(
         metrics[f"Recall@{k}"] = hit_rate
         metrics[f"HitRate@{k}"] = hit_rate
     return metrics
-
-
-def mask_seen_items(
-    scores: torch.Tensor,
-    user_ids: torch.Tensor,
-    seen_items: dict[int, set[int]],
-) -> torch.Tensor:
-    """Set scores for training-seen items to negative infinity."""
-    masked_scores = scores.clone()
-    for row, user_id in enumerate(user_ids.tolist()):
-        seen = seen_items.get(user_id, set())
-        if seen:
-            indices = torch.tensor(sorted(seen), device=scores.device)
-            masked_scores[row, indices] = -torch.inf
-    return masked_scores
-

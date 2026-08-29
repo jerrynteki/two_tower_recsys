@@ -5,10 +5,12 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-import pandas as pd
 import torch
 
-from evaluation.metrics import mask_seen_items, single_target_metrics
+import pandas as pd
+
+from evaluation.metrics import single_target_metrics
+from evaluation.retrieval import build_seen_items, retrieve_topk
 from models import TwoTower
 
 
@@ -33,46 +35,6 @@ def load_model(checkpoint_path: Path, device: torch.device) -> TwoTower:
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
     return model
-
-
-def build_seen_items(train: pd.DataFrame) -> dict[int, set[int]]:
-    return {
-        int(user_id): set(group["movie_idx"].astype(int))
-        for user_id, group in train.groupby("user_idx")
-    }
-
-
-@torch.no_grad()
-def retrieve_topk(
-    model: TwoTower,
-    interactions: pd.DataFrame,
-    seen_items: dict[int, set[int]],
-    max_k: int,
-    batch_size: int,
-    device: torch.device,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Retrieve full-catalog Top-K items for every evaluation user."""
-    all_item_ids = torch.arange(
-        model.item_tower.embedding.num_embeddings, device=device
-    )
-    item_embeddings = model.item_tower(all_item_ids)
-    retrieved_batches: list[torch.Tensor] = []
-    target_batches: list[torch.Tensor] = []
-
-    for start in range(0, len(interactions), batch_size):
-        batch = interactions.iloc[start : start + batch_size]
-        user_ids = torch.tensor(batch["user_idx"].to_numpy(), device=device)
-        target_items = torch.tensor(batch["movie_idx"].to_numpy(), device=device)
-
-        user_embeddings = model.user_tower(user_ids)
-        scores = model.score_embeddings(user_embeddings, item_embeddings)
-        scores = mask_seen_items(scores, user_ids, seen_items)
-        topk_items = scores.topk(max_k, dim=1).indices
-
-        retrieved_batches.append(topk_items.cpu())
-        target_batches.append(target_items.cpu())
-
-    return torch.cat(retrieved_batches), torch.cat(target_batches)
 
 
 def parse_args() -> argparse.Namespace:

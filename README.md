@@ -31,8 +31,10 @@ Read the implementation in dependency order:
    and item encoders, normalized embeddings, and in-batch similarity matrix.
 4. [`training/train.py`](training/train.py) connects the data and model, builds
    diagonal cross-entropy labels, optimizes the towers, and saves a checkpoint.
-5. [`evaluation/evaluate.py`](evaluation/evaluate.py) scores the full movie
-   catalog, filters training-seen items, and measures Top-K retrieval quality.
+5. [`evaluation/retrieval.py`](evaluation/retrieval.py) scores the full catalog,
+   filters training-seen items, and selects Top-K candidates;
+   [`evaluation/metrics.py`](evaluation/metrics.py) calculates retrieval quality;
+   and [`evaluation/evaluate.py`](evaluation/evaluate.py) coordinates both.
 6. [`experiments/run_model_experiments.py`](experiments/run_model_experiments.py)
    compares representation and scoring choices under one controlled setup.
 7. [`tests/`](tests) verifies embedding behavior, the training objective,
