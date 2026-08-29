@@ -9,7 +9,7 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from evaluation.metrics import single_target_metrics
+from evaluation.evaluate import single_target_metrics
 from features.prepare_movie_features import GENRES
 from models import TwoTower
 from models.feature_two_tower import FeatureTwoTower

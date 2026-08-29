@@ -2,7 +2,7 @@ import unittest
 
 import torch
 
-from evaluation.metrics import single_target_metrics
+from evaluation.evaluate import single_target_metrics
 
 
 class RetrievalMetricsTest(unittest.TestCase):

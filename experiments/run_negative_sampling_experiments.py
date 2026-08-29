@@ -10,8 +10,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from datasets import InteractionDataset
-from evaluation.metrics import single_target_metrics
-from evaluation.retrieval import build_seen_items, retrieve_topk
+from evaluation.evaluate import build_seen_items, retrieve_topk, single_target_metrics
 from models import TwoTower
 from training.negative_sampling import CatalogNegativeSampler, train_sampled_epoch
 from training.train import load_catalog_sizes, select_device, train_one_epoch

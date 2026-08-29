@@ -3,7 +3,7 @@ import unittest
 import pandas as pd
 import torch
 
-from evaluation.retrieval import build_seen_items, mask_seen_items
+from evaluation.evaluate import build_seen_items, mask_seen_items
 
 
 class RetrievalTest(unittest.TestCase):
