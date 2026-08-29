@@ -2,7 +2,8 @@
 
 A from-scratch PyTorch implementation of two-tower candidate retrieval on
 MovieLens 100K. The repository covers chronological data splitting, contiguous
-ID mappings, normalized user/item embeddings, and in-batch-negative training.
+ID mappings, multiple negative-sampling strategies, side-information cold-start
+experiments, full-catalog evaluation, and FAISS retrieval.
 
 ## Architecture
 
@@ -36,6 +37,18 @@ Read the implementation in dependency order:
    compares representation and scoring choices under one controlled setup.
 7. [`tests/`](tests) verifies embedding behavior, the training objective,
    seen-item filtering, and retrieval metrics.
+8. [`training/negative_sampling.py`](training/negative_sampling.py) implements
+   uniform, popularity-weighted, and model-selected hard negatives.
+9. [`experiments/run_negative_sampling_experiments.py`](experiments/run_negative_sampling_experiments.py)
+   compares those samplers with the in-batch baseline.
+10. [`features/prepare_movie_features.py`](features/prepare_movie_features.py)
+    turns genres and release year into an item-feature matrix.
+11. [`models/feature_two_tower.py`](models/feature_two_tower.py) encodes movie
+    content, including movies unseen during training.
+12. [`experiments/run_cold_start_experiment.py`](experiments/run_cold_start_experiment.py)
+    compares ID-only and content-based retrieval on held-out cold movies.
+13. [`retrieval/build_index.py`](retrieval/build_index.py) and
+    [`retrieval/retrieve.py`](retrieval/retrieve.py) build and query a FAISS index.
 
 ```text
 MovieLens interactions
@@ -96,6 +109,32 @@ Compare model configurations with the same seed, data, and optimizer:
 ```bash
 python -m experiments.run_model_experiments --epochs 3
 ```
+
+Compare negative-sampling strategies:
+
+```bash
+python -m experiments.run_negative_sampling_experiments --epochs 3
+```
+
+For the content experiment, place the MovieLens 100K `u.item` file at
+`data/raw/u.item`, then run:
+
+```bash
+python -m features.prepare_movie_features
+python -m experiments.run_cold_start_experiment --epochs 5
+```
+
+Build an exact FAISS index and retrieve ten unseen movies for raw user ID 1:
+
+```bash
+python -m retrieval.build_index
+python -m retrieval.retrieve --user-id 1 --top-k 10
+```
+
+`IndexFlatIP` performs exact inner-product search. Because both sides are L2
+normalized before indexing and querying, the score is cosine similarity. This
+is simple and exact for MovieLens; the same interface can later use an
+approximate FAISS index for a much larger catalog.
 
 Run the tests:
 

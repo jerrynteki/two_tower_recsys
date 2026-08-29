@@ -2,6 +2,8 @@
 .tools/
 checkpoints/
 artifacts/
+data/raw/u.item
+data/processed/movie_features.csv
 __pycache__/
 *.py[cod]
 .DS_Store

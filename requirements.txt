@@ -1,2 +1,3 @@
 pandas>=2.2,<3
 torch>=2.7,<3
+faiss-cpu>=1.12,<2

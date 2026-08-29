@@ -86,3 +86,14 @@ class TwoTower(nn.Module):
             user_embeddings = F.normalize(user_embeddings, p=2, dim=-1)
             item_embeddings = F.normalize(item_embeddings, p=2, dim=-1)
         return user_embeddings @ item_embeddings.T
+
+    def score_pairs(
+        self,
+        user_embeddings: torch.Tensor,
+        item_embeddings: torch.Tensor,
+    ) -> torch.Tensor:
+        """Score aligned user-item pairs, including broadcast negative sets."""
+        if self.similarity == "cosine":
+            user_embeddings = F.normalize(user_embeddings, p=2, dim=-1)
+            item_embeddings = F.normalize(item_embeddings, p=2, dim=-1)
+        return (user_embeddings * item_embeddings).sum(dim=-1)
