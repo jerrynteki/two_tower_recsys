@@ -30,7 +30,8 @@ Read the implementation in dependency order:
 3. [`models/two_tower.py`](models/two_tower.py) defines the independent user
    and item encoders, normalized embeddings, and in-batch similarity matrix.
 4. [`training/train.py`](training/train.py) connects the data and model, builds
-   diagonal cross-entropy labels, optimizes the towers, and saves a checkpoint.
+   diagonal cross-entropy labels, optimizes the towers, logs TensorBoard
+   monitoring data, and saves a checkpoint.
 5. [`evaluation/evaluate.py`](evaluation/evaluate.py) scores the full catalog,
    filters training-seen items, selects Top-K candidates, and calculates
    retrieval quality.
@@ -99,6 +100,21 @@ Train the model:
 python -m training.train --epochs 5
 ```
 
+Training logs loss, validation retrieval metrics, learning rate, throughput,
+epoch duration, and embedding norms. Start the TensorBoard dashboard in another
+terminal:
+
+```bash
+tensorboard --logdir runs
+```
+
+Then open `http://localhost:6006`. Use `--run-name` to label a run or
+`--no-tensorboard` to disable logging:
+
+```bash
+python -m training.train --epochs 5 --run-name dim128 --embedding-dim 128
+```
+
 Evaluate full-catalog retrieval on the validation split:
 
 ```bash
@@ -110,6 +126,9 @@ Compare model configurations with the same seed, data, and optimizer:
 ```bash
 python -m experiments.run_model_experiments --epochs 3
 ```
+
+Each configuration appears as a separate TensorBoard run, allowing its loss,
+validation Recall@K, speed, and embedding statistics to be compared directly.
 
 Compare negative-sampling strategies:
 
