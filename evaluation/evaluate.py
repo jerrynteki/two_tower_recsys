@@ -58,6 +58,47 @@ def mask_seen_items(
     return masked_scores
 
 
+def retrieve_baseline_topk(
+    train: pd.DataFrame,
+    interactions: pd.DataFrame,
+    seen_items: dict[int, set[int]],
+    num_items: int,
+    max_k: int,
+    batch_size: int,
+    strategy: str,
+    seed: int = 42,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Retrieve with a non-learned random or popularity ranking rule."""
+    if strategy not in {"random", "popularity"}:
+        raise ValueError("strategy must be 'random' or 'popularity'")
+    if max_k <= 0 or max_k > num_items:
+        raise ValueError("max_k must be between 1 and num_items")
+
+    popularity = torch.bincount(
+        torch.as_tensor(train["movie_idx"].to_numpy(), dtype=torch.long),
+        minlength=num_items,
+    ).float()
+    generator = torch.Generator().manual_seed(seed)
+    retrieved_batches: list[torch.Tensor] = []
+    target_batches: list[torch.Tensor] = []
+
+    for start in range(0, len(interactions), batch_size):
+        batch = interactions.iloc[start : start + batch_size]
+        user_ids = torch.as_tensor(batch["user_idx"].to_numpy(), dtype=torch.long)
+        target_items = torch.as_tensor(
+            batch["movie_idx"].to_numpy(), dtype=torch.long
+        )
+        if strategy == "popularity":
+            scores = popularity.unsqueeze(0).expand(len(batch), -1)
+        else:
+            scores = torch.rand(len(batch), num_items, generator=generator)
+        scores = mask_seen_items(scores, user_ids, seen_items)
+        retrieved_batches.append(scores.topk(max_k, dim=1).indices)
+        target_batches.append(target_items)
+
+    return torch.cat(retrieved_batches), torch.cat(target_batches)
+
+
 @torch.no_grad()
 def retrieve_topk(
     model: TwoTower,
@@ -96,7 +137,7 @@ def single_target_metrics(
     target_items: torch.Tensor,
     ks: Iterable[int],
 ) -> dict[str, float]:
-    """Calculate Recall@K and HitRate@K for one relevant item per user."""
+    """Calculate retrieval and rank-sensitive metrics for one target per user."""
     if topk_items.ndim != 2:
         raise ValueError("topk_items must have shape [num_users, max_k]")
     if target_items.ndim != 1 or len(target_items) != len(topk_items):
@@ -106,11 +147,21 @@ def single_target_metrics(
     for k in sorted(set(ks)):
         if k <= 0 or k > topk_items.shape[1]:
             raise ValueError(f"k={k} is outside the available Top-K results")
-        hits = (topk_items[:, :k] == target_items[:, None]).any(dim=1)
+        matches = topk_items[:, :k] == target_items[:, None]
+        hits = matches.any(dim=1)
         hit_rate = hits.float().mean().item()
+        rank_positions = torch.arange(
+            1, k + 1, dtype=torch.float32, device=topk_items.device
+        )
+        reciprocal_ranks = (matches.float() / rank_positions).sum(dim=1)
+        discounted_gains = (
+            matches.float() / torch.log2(rank_positions + 1)
+        ).sum(dim=1)
         # With one relevant item per user, recall and hit rate are identical.
         metrics[f"Recall@{k}"] = hit_rate
         metrics[f"HitRate@{k}"] = hit_rate
+        metrics[f"MRR@{k}"] = reciprocal_ranks.mean().item()
+        metrics[f"NDCG@{k}"] = discounted_gains.mean().item()
     return metrics
 
 
@@ -121,6 +172,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--split", choices=("val", "test"), default="val")
     parser.add_argument("--ks", type=int, nargs="+", default=[10, 50, 100])
     parser.add_argument("--batch-size", type=int, default=256)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--no-baselines", action="store_true")
     return parser.parse_args()
 
 
@@ -142,14 +195,32 @@ def main() -> None:
         args.batch_size,
         device,
     )
-    metrics = single_target_metrics(topk_items, target_items, args.ks)
+    results = {"two_tower": single_target_metrics(topk_items, target_items, args.ks)}
+    if not args.no_baselines:
+        seen_items = build_seen_items(train)
+        for strategy in ("random", "popularity"):
+            baseline_items, baseline_targets = retrieve_baseline_topk(
+                train,
+                evaluation_data,
+                seen_items,
+                model.item_tower.embedding.num_embeddings,
+                max_k,
+                args.batch_size,
+                strategy,
+                args.seed,
+            )
+            results[strategy] = single_target_metrics(
+                baseline_items, baseline_targets, args.ks
+            )
 
     print(
         f"device: {device} | split: {args.split} | users: {len(evaluation_data):,} "
         f"| catalog: {model.item_tower.embedding.num_embeddings:,}"
     )
-    for name, value in metrics.items():
-        print(f"{name}: {value:.4f}")
+    for method, metrics in results.items():
+        print(f"\n{method}")
+        for name, value in metrics.items():
+            print(f"{name}: {value:.4f}")
 
 
 if __name__ == "__main__":

@@ -9,12 +9,24 @@ from models import TwoTower
 
 
 class CatalogNegativeSampler:
-    """Sample unseen catalog items uniformly or by item popularity."""
+    """Sample catalog negatives, optionally mixing in observed dislikes."""
 
-    def __init__(self, num_items: int, seen_items: dict[int, set[int]], popularity: torch.Tensor | None = None, seed: int = 42) -> None:
+    def __init__(
+        self,
+        num_items: int,
+        seen_items: dict[int, set[int]],
+        popularity: torch.Tensor | None = None,
+        observed_negatives: dict[int, set[int]] | None = None,
+        observed_fraction: float = 0.0,
+        seed: int = 42,
+    ) -> None:
+        if not 0.0 <= observed_fraction <= 1.0:
+            raise ValueError("observed_fraction must be between 0 and 1")
         self.num_items = num_items
         self.seen_items = seen_items
         self.weights = torch.ones(num_items) if popularity is None else popularity.float().clamp_min(1)
+        self.observed_negatives = observed_negatives or {}
+        self.observed_fraction = observed_fraction
         self.generator = torch.Generator().manual_seed(seed)
 
     def sample(self, user_ids: torch.Tensor, count: int, candidate_count: int | None = None) -> torch.Tensor:
@@ -25,10 +37,41 @@ class CatalogNegativeSampler:
             seen = self.seen_items.get(int(user_id), set())
             if seen:
                 weights[list(seen)] = 0
-            if int((weights > 0).sum()) < width:
+
+            observed = sorted(
+                self.observed_negatives.get(int(user_id), set()) - seen
+            )
+            observed_count = min(
+                len(observed), round(width * self.observed_fraction)
+            )
+            chosen_observed = torch.empty(0, dtype=torch.long)
+            if observed_count:
+                observed_tensor = torch.tensor(observed, dtype=torch.long)
+                order = torch.randperm(
+                    len(observed_tensor), generator=self.generator
+                )[:observed_count]
+                chosen_observed = observed_tensor[order]
+                weights[observed_tensor] = 0
+
+            catalog_count = width - observed_count
+            if int((weights > 0).sum()) < catalog_count:
                 raise ValueError("not enough unseen items to sample without replacement")
-            rows.append(torch.multinomial(weights, width, replacement=False, generator=self.generator))
+            sampled_catalog = torch.multinomial(
+                weights,
+                catalog_count,
+                replacement=False,
+                generator=self.generator,
+            )
+            rows.append(torch.cat((chosen_observed, sampled_catalog)))
         return torch.stack(rows).to(user_ids.device)
+
+
+def build_item_sets(interactions) -> dict[int, set[int]]:
+    """Group an interaction table into user-to-item sets."""
+    return {
+        int(user_id): set(group["movie_idx"].astype(int))
+        for user_id, group in interactions.groupby("user_idx")
+    }
 
 
 def sampled_logits(model: TwoTower, user_ids: torch.Tensor, positive_ids: torch.Tensor, negative_ids: torch.Tensor) -> torch.Tensor:

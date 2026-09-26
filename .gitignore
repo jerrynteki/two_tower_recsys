@@ -4,6 +4,8 @@ checkpoints/
 artifacts/
 runs/
 data/raw/u.item
+data/raw/ml-1m/
+data/processed-1m/
 data/processed/movie_features.csv
 __pycache__/
 *.py[cod]

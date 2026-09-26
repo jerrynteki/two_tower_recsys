@@ -1,7 +1,8 @@
-"""Prepare MovieLens 100K interactions for two-tower retrieval."""
+"""Prepare MovieLens 100K or 1M interactions for two-tower retrieval."""
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
@@ -12,10 +13,13 @@ RAW_PATH = Path("data/raw/u.data")
 OUTPUT_DIR = Path("data/processed")
 
 
-def load_data(path: Path = RAW_PATH) -> pd.DataFrame:
+def load_data(path: Path = RAW_PATH, dataset: str = "100k") -> pd.DataFrame:
+    if dataset not in {"100k", "1m"}:
+        raise ValueError("dataset must be '100k' or '1m'")
     return pd.read_csv(
         path,
-        sep="\t",
+        sep="\t" if dataset == "100k" else "::",
+        engine="c" if dataset == "100k" else "python",
         names=["user_id", "movie_id", "rating", "timestamp"],
         dtype={
             "user_id": "int64",
@@ -24,6 +28,16 @@ def load_data(path: Path = RAW_PATH) -> pd.DataFrame:
             "timestamp": "int64",
         },
     )
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", choices=("100k", "1m"), default="100k")
+    parser.add_argument("--raw-path", type=Path)
+    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--min-positive-rating", type=int, default=4)
+    parser.add_argument("--max-negative-rating", type=int, default=2)
+    return parser.parse_args()
 
 
 def filter_positive_interactions(
@@ -64,6 +78,36 @@ def chronological_split(
     return train, val, test
 
 
+def build_observed_negative_interactions(
+    ratings: pd.DataFrame,
+    train: pd.DataFrame,
+    user2idx: dict[int, int],
+    movie2idx: dict[int, int],
+    max_rating: int = 2,
+) -> pd.DataFrame:
+    """Keep strong dislikes observed before each user's validation period."""
+    negatives = ratings.loc[ratings["rating"] <= max_rating].copy()
+    negatives["user_idx"] = negatives["user_id"].map(user2idx)
+    negatives["movie_idx"] = negatives["movie_id"].map(movie2idx)
+    negatives = negatives.dropna(subset=["user_idx", "movie_idx"])
+    negatives[["user_idx", "movie_idx"]] = negatives[
+        ["user_idx", "movie_idx"]
+    ].astype("int64")
+
+    train_cutoffs = (
+        train.groupby("user_idx", as_index=False)["timestamp"]
+        .max()
+        .rename(columns={"timestamp": "train_cutoff"})
+    )
+    negatives = negatives.merge(train_cutoffs, on="user_idx", how="inner")
+    negatives = negatives.loc[
+        negatives["timestamp"] <= negatives["train_cutoff"]
+    ].drop(columns="train_cutoff")
+    return negatives.sort_values(
+        ["user_idx", "timestamp", "movie_idx"], kind="stable"
+    ).reset_index(drop=True)
+
+
 def validate_split(
     train: pd.DataFrame, val: pd.DataFrame, test: pd.DataFrame
 ) -> None:
@@ -89,6 +133,7 @@ def save_processed_data(
     train: pd.DataFrame,
     val: pd.DataFrame,
     test: pd.DataFrame,
+    observed_negatives: pd.DataFrame,
     user2idx: dict[int, int],
     movie2idx: dict[int, int],
     output_dir: Path = OUTPUT_DIR,
@@ -97,6 +142,7 @@ def save_processed_data(
     train.to_csv(output_dir / "train.csv", index=False)
     val.to_csv(output_dir / "val.csv", index=False)
     test.to_csv(output_dir / "test.csv", index=False)
+    observed_negatives.to_csv(output_dir / "train_negatives.csv", index=False)
     for filename, mapping in (
         ("user2idx.json", user2idx),
         ("movie2idx.json", movie2idx),
@@ -106,20 +152,47 @@ def save_processed_data(
 
 
 def main() -> None:
-    if not RAW_PATH.exists():
+    args = parse_args()
+    raw_path = args.raw_path or (
+        RAW_PATH if args.dataset == "100k" else Path("data/raw/ml-1m/ratings.dat")
+    )
+    output_dir = args.output_dir or (
+        OUTPUT_DIR if args.dataset == "100k" else Path("data/processed-1m")
+    )
+    if not raw_path.exists():
         raise FileNotFoundError(
-            f"Missing {RAW_PATH}. Download MovieLens 100K and copy u.data there."
+            f"Missing {raw_path}. Download MovieLens {args.dataset} and place "
+            "the ratings file there."
         )
-    interactions = filter_positive_interactions(load_data())
+    ratings = load_data(raw_path, args.dataset)
+    interactions = filter_positive_interactions(
+        ratings, args.min_positive_rating
+    )
     interactions, user2idx, movie2idx = build_id_mapping(interactions)
     train, val, test = chronological_split(interactions)
     validate_split(train, val, test)
-    save_processed_data(train, val, test, user2idx, movie2idx)
+    observed_negatives = build_observed_negative_interactions(
+        ratings,
+        train,
+        user2idx,
+        movie2idx,
+        args.max_negative_rating,
+    )
+    save_processed_data(
+        train,
+        val,
+        test,
+        observed_negatives,
+        user2idx,
+        movie2idx,
+        output_dir,
+    )
 
-    print("Preprocessing complete")
+    print(f"Preprocessing complete | dataset: MovieLens {args.dataset}")
     print(f"users: {len(user2idx):,} | movies: {len(movie2idx):,}")
     print(f"train: {len(train):,} | val: {len(val):,} | test: {len(test):,}")
-    print(f"artifacts: {OUTPUT_DIR.resolve()}")
+    print(f"observed train negatives: {len(observed_negatives):,}")
+    print(f"artifacts: {output_dir.resolve()}")
 
 
 if __name__ == "__main__":
