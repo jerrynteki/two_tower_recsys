@@ -13,7 +13,8 @@ from evaluation.evaluate import single_target_metrics
 from features.prepare_movie_features import GENRES
 from models import TwoTower
 from models.feature_two_tower import FeatureTwoTower
-from training.train import select_device, train_one_epoch
+from training.negative_sampling import UniformNegativeSampler, train_sampled_epoch
+from training.train import select_device
 
 
 def evaluate(model, targets: pd.DataFrame, seen: dict[int, set[int]], num_items: int, device: torch.device):
@@ -36,8 +37,13 @@ def main() -> None:
         "--processed-dir", type=Path, default=Path("data/processed-1m")
     )
     parser.add_argument("--epochs", type=int, default=5)
+    parser.add_argument("--negative-count", type=int, default=64)
     parser.add_argument("--cold-items", type=int, default=100)
-    parser.add_argument("--output", type=Path, default=Path("artifacts/cold_start_experiment.csv"))
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("artifacts/cold_start_experiment_1m.csv"),
+    )
     args = parser.parse_args()
     device = select_device()
     train = pd.read_csv(args.processed_dir / "train.csv")
@@ -60,8 +66,16 @@ def main() -> None:
     for name, model in (("id_only", TwoTower(num_users, num_items)), ("content", FeatureTwoTower(num_users, matrix))):
         model = model.to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        sampler = UniformNegativeSampler(num_items, seen, seed=42)
         for _ in range(args.epochs):
-            loss = train_one_epoch(model, loader, optimizer, device)
+            loss = train_sampled_epoch(
+                model,
+                loader,
+                optimizer,
+                device,
+                sampler,
+                args.negative_count,
+            )
         rows.append({"model": name, "cold_items": len(chosen), "targets": len(cold_targets), "final_loss": loss, **evaluate(model, cold_targets, seen, num_items, device)})
         print(rows[-1])
     args.output.parent.mkdir(parents=True, exist_ok=True)

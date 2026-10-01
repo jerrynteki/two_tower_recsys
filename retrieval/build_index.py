@@ -32,7 +32,7 @@ def main() -> None:
     parser.add_argument(
         "--checkpoint", type=Path, default=Path("checkpoints/two_tower_1m.pt")
     )
-    parser.add_argument("--output-dir", type=Path, default=Path("artifacts/faiss"))
+    parser.add_argument("--output-dir", type=Path, default=Path("artifacts/faiss-1m"))
     args = parser.parse_args()
     build(args.checkpoint, args.output_dir)
 

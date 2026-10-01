@@ -42,7 +42,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--raw-path", type=Path)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--min-positive-rating", type=int, default=4)
-    parser.add_argument("--max-negative-rating", type=int, default=2)
     parser.add_argument(
         "--protocol",
         choices=("chronological", "flowcf"),
@@ -221,36 +220,6 @@ def validate_flowcf_split(
             )
 
 
-def build_observed_negative_interactions(
-    ratings: pd.DataFrame,
-    train: pd.DataFrame,
-    user2idx: dict[int, int],
-    movie2idx: dict[int, int],
-    max_rating: int = 2,
-) -> pd.DataFrame:
-    """Keep strong dislikes observed before each user's validation period."""
-    negatives = ratings.loc[ratings["rating"] <= max_rating].copy()
-    negatives["user_idx"] = negatives["user_id"].map(user2idx)
-    negatives["movie_idx"] = negatives["movie_id"].map(movie2idx)
-    negatives = negatives.dropna(subset=["user_idx", "movie_idx"])
-    negatives[["user_idx", "movie_idx"]] = negatives[
-        ["user_idx", "movie_idx"]
-    ].astype("int64")
-
-    train_cutoffs = (
-        train.groupby("user_idx", as_index=False)["timestamp"]
-        .max()
-        .rename(columns={"timestamp": "train_cutoff"})
-    )
-    negatives = negatives.merge(train_cutoffs, on="user_idx", how="inner")
-    negatives = negatives.loc[
-        negatives["timestamp"] <= negatives["train_cutoff"]
-    ].drop(columns="train_cutoff")
-    return negatives.sort_values(
-        ["user_idx", "timestamp", "movie_idx"], kind="stable"
-    ).reset_index(drop=True)
-
-
 def validate_split(
     train: pd.DataFrame, val: pd.DataFrame, test: pd.DataFrame
 ) -> None:
@@ -276,7 +245,6 @@ def save_processed_data(
     train: pd.DataFrame,
     val: pd.DataFrame,
     test: pd.DataFrame,
-    observed_negatives: pd.DataFrame | None,
     user2idx: dict[int, int],
     movie2idx: dict[int, int],
     output_dir: Path = OUTPUT_DIR,
@@ -286,10 +254,6 @@ def save_processed_data(
     train.to_csv(output_dir / "train.csv", index=False)
     val.to_csv(output_dir / "val.csv", index=False)
     test.to_csv(output_dir / "test.csv", index=False)
-    if observed_negatives is not None:
-        observed_negatives.to_csv(
-            output_dir / "train_negatives.csv", index=False
-        )
     for filename, mapping in (
         ("user2idx.json", user2idx),
         ("movie2idx.json", movie2idx),
@@ -326,22 +290,13 @@ def main() -> None:
     if args.protocol == "flowcf":
         train, val, test = flowcf_split(interactions, seed=args.seed)
         validate_flowcf_split(interactions, train, val, test)
-        observed_negatives = None
     else:
         train, val, test = chronological_split(interactions)
         validate_split(train, val, test)
-        observed_negatives = build_observed_negative_interactions(
-            ratings,
-            train,
-            user2idx,
-            movie2idx,
-            args.max_negative_rating,
-        )
     save_processed_data(
         train,
         val,
         test,
-        observed_negatives,
         user2idx,
         movie2idx,
         output_dir,
@@ -374,8 +329,6 @@ def main() -> None:
     )
     print(f"users: {len(user2idx):,} | movies: {len(movie2idx):,}")
     print(f"train: {len(train):,} | val: {len(val):,} | test: {len(test):,}")
-    if observed_negatives is not None:
-        print(f"observed train negatives: {len(observed_negatives):,}")
     print(f"artifacts: {output_dir.resolve()}")
 
 

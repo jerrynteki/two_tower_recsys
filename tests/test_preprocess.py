@@ -5,7 +5,6 @@ from tempfile import TemporaryDirectory
 import pandas as pd
 
 from preprocess import (
-    build_observed_negative_interactions,
     filter_k_core,
     flowcf_split,
     load_data,
@@ -33,29 +32,6 @@ class PreprocessTests(unittest.TestCase):
             "rating": 5,
             "timestamp": 978300760,
         })
-
-    def test_observed_negatives_are_strong_dislikes_before_cutoff(self) -> None:
-        ratings = pd.DataFrame(
-            {
-                "user_id": [10, 10, 10, 20],
-                "movie_id": [100, 101, 102, 100],
-                "rating": [1, 2, 1, 2],
-                "timestamp": [5, 15, 25, 5],
-            }
-        )
-        train = pd.DataFrame(
-            {"user_idx": [0], "movie_idx": [0], "timestamp": [20]}
-        )
-
-        result = build_observed_negative_interactions(
-            ratings,
-            train,
-            user2idx={10: 0},
-            movie2idx={100: 0, 101: 1, 102: 2},
-        )
-
-        self.assertEqual(result["movie_idx"].tolist(), [0, 1])
-        self.assertTrue((result["timestamp"] <= 20).all())
 
     def test_k_core_filter_repeats_until_users_and_movies_are_eligible(self) -> None:
         interactions = pd.DataFrame(
@@ -107,7 +83,6 @@ class PreprocessTests(unittest.TestCase):
         train, val, test = flowcf_split(interactions, seed=2020)
 
         validate_flowcf_split(interactions, train, val, test)
-
 
 if __name__ == "__main__":
     unittest.main()

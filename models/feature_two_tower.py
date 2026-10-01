@@ -31,6 +31,7 @@ class FeatureTwoTower(nn.Module):
     def score_embeddings(self, users: torch.Tensor, items: torch.Tensor) -> torch.Tensor:
         return users @ items.T
 
-    def in_batch_logits(self, user_ids: torch.Tensor, item_ids: torch.Tensor) -> torch.Tensor:
-        users, items = self(user_ids, item_ids)
-        return self.score_embeddings(users, items) / self.temperature
+    def score_pairs(
+        self, users: torch.Tensor, items: torch.Tensor
+    ) -> torch.Tensor:
+        return (users * items).sum(dim=-1)
