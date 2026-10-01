@@ -69,13 +69,6 @@ class TwoTower(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         return self.user_tower(user_ids), self.item_tower(item_ids)
 
-    def in_batch_logits(
-        self, user_ids: torch.Tensor, positive_item_ids: torch.Tensor
-    ) -> torch.Tensor:
-        """Score every user against every positive item in the batch."""
-        user_embeddings, item_embeddings = self(user_ids, positive_item_ids)
-        return self.score_embeddings(user_embeddings, item_embeddings) / self.temperature
-
     def score_embeddings(
         self,
         user_embeddings: torch.Tensor,

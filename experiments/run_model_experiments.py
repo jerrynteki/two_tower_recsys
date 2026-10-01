@@ -16,12 +16,12 @@ from torch.utils.tensorboard import SummaryWriter
 from datasets import InteractionDataset
 from evaluation.evaluate import (
     build_seen_items,
-    retrieve_topk,
+    evaluate_retrieval_metrics,
     select_device,
-    single_target_metrics,
 )
 from models import TwoTower
-from training.train import load_catalog_sizes, train_one_epoch
+from training.negative_sampling import UniformNegativeSampler, train_sampled_epoch
+from training.train import load_catalog_sizes
 from training.monitoring import (
     log_configuration,
     log_model_statistics,
@@ -55,13 +55,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--processed-dir", type=Path, default=Path("data/processed-1m")
     )
-    parser.add_argument("--output", type=Path, default=Path("artifacts/model_experiments.csv"))
+    parser.add_argument(
+        "--output", type=Path, default=Path("artifacts/model_experiments_1m.csv")
+    )
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=256)
+    parser.add_argument("--negative-count", type=int, default=64)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--ks", type=int, nargs="+", default=[10, 50, 100])
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--log-dir", type=Path, default=Path("runs/model_experiments"))
+    parser.add_argument(
+        "--log-dir", type=Path, default=Path("runs/model_experiments_1m")
+    )
     parser.add_argument("--no-tensorboard", action="store_true")
     return parser.parse_args()
 
@@ -100,12 +105,14 @@ def main() -> None:
             similarity=experiment.similarity,
         ).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
+        sampler = UniformNegativeSampler(num_items, seen_items, seed=args.seed)
         writer = None
         config = {
             **asdict(experiment),
             "batch_size": args.batch_size,
             "epochs": args.epochs,
             "learning_rate": args.learning_rate,
+            "negative_count": args.negative_count,
             "seed": args.seed,
         }
         if not args.no_tensorboard:
@@ -116,17 +123,23 @@ def main() -> None:
         metrics: dict[str, float] = {}
         for epoch in range(1, args.epochs + 1):
             started = time.perf_counter()
-            loss = train_one_epoch(model, loader, optimizer, device)
+            loss = train_sampled_epoch(
+                model,
+                loader,
+                optimizer,
+                device,
+                sampler,
+                args.negative_count,
+            )
             elapsed = time.perf_counter() - started
-            topk_items, targets = retrieve_topk(
+            metrics = evaluate_retrieval_metrics(
                 model,
                 validation,
                 seen_items,
-                max(args.ks),
+                args.ks,
                 args.batch_size,
                 device,
             )
-            metrics = single_target_metrics(topk_items, targets, args.ks)
             if writer:
                 writer.add_scalar("train/loss", loss, epoch)
                 writer.add_scalar("performance/epoch_seconds", elapsed, epoch)

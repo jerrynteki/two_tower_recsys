@@ -12,8 +12,7 @@ import torch
 
 from evaluation.evaluate import (
     build_seen_items,
-    retrieve_baseline_topk,
-    single_target_metrics,
+    evaluate_baseline_metrics,
 )
 from training.train import load_catalog_sizes
 
@@ -23,16 +22,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--processed-dir", type=Path, default=Path("data/processed-1m")
     )
-    parser.add_argument("--output-dir", type=Path, default=Path("artifacts/multi_seed"))
+    parser.add_argument(
+        "--output-dir", type=Path, default=Path("artifacts/multi_seed_1m")
+    )
     parser.add_argument(
         "--trials-output",
         type=Path,
-        default=Path("artifacts/multi_seed_trials.csv"),
+        default=Path("artifacts/multi_seed_1m_trials.csv"),
     )
     parser.add_argument(
         "--summary-output",
         type=Path,
-        default=Path("artifacts/multi_seed_summary.csv"),
+        default=Path("artifacts/multi_seed_1m_summary.csv"),
     )
     parser.add_argument("--seeds", type=int, nargs="+", default=[42, 43, 44])
     parser.add_argument("--epochs", type=int, default=12)
@@ -41,13 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--embedding-dim", type=int, default=128)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--temperature", type=float, default=0.07)
-    parser.add_argument(
-        "--negative-strategy",
-        choices=("in_batch", "uniform", "popularity", "hybrid"),
-        default="uniform",
-    )
     parser.add_argument("--negative-count", type=int, default=64)
-    parser.add_argument("--observed-negative-fraction", type=float, default=0.5)
     parser.add_argument("--selection-metric", default="NDCG@10")
     parser.add_argument("--ks", type=int, nargs="+", default=[10, 50, 100])
     parser.add_argument("--no-tensorboard", action="store_true")
@@ -62,16 +57,15 @@ def popularity_metrics(
     train = pd.read_csv(processed_dir / "train.csv")
     validation = pd.read_csv(processed_dir / "val.csv")
     _, num_items = load_catalog_sizes(processed_dir)
-    topk, targets = retrieve_baseline_topk(
+    return evaluate_baseline_metrics(
         train,
         validation,
         build_seen_items(train),
         num_items,
-        max(ks),
+        ks,
         batch_size,
         "popularity",
     )
-    return single_target_metrics(topk, targets, ks)
 
 
 def train_command(args: argparse.Namespace, seed: int, checkpoint: Path) -> list[str]:
@@ -95,12 +89,8 @@ def train_command(args: argparse.Namespace, seed: int, checkpoint: Path) -> list
         str(args.learning_rate),
         "--temperature",
         str(args.temperature),
-        "--negative-strategy",
-        args.negative_strategy,
         "--negative-count",
         str(args.negative_count),
-        "--observed-negative-fraction",
-        str(args.observed_negative_fraction),
         "--selection-metric",
         args.selection_metric,
         "--ks",
@@ -108,7 +98,7 @@ def train_command(args: argparse.Namespace, seed: int, checkpoint: Path) -> list
         "--seed",
         str(seed),
         "--run-name",
-        f"{args.negative_strategy}_dim{args.embedding_dim}_seed{seed}",
+        f"uniform_dim{args.embedding_dim}_seed{seed}",
     ]
     if args.no_tensorboard:
         command.append("--no-tensorboard")
@@ -135,7 +125,7 @@ def main() -> None:
             "embedding_dim": args.embedding_dim,
             "learning_rate": args.learning_rate,
             "temperature": args.temperature,
-            "negative_strategy": args.negative_strategy,
+            "negative_strategy": "uniform",
             "negative_count": args.negative_count,
         }
         row.update(metrics)

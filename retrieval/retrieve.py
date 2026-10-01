@@ -23,7 +23,7 @@ def main() -> None:
     parser.add_argument(
         "--processed-dir", type=Path, default=Path("data/processed-1m")
     )
-    parser.add_argument("--index-dir", type=Path, default=Path("artifacts/faiss"))
+    parser.add_argument("--index-dir", type=Path, default=Path("artifacts/faiss-1m"))
     args = parser.parse_args()
     with (args.processed_dir / "user2idx.json").open() as handle:
         user_map = {int(k): v for k, v in json.load(handle).items()}

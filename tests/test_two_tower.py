@@ -18,14 +18,6 @@ class TwoTowerTest(unittest.TestCase):
         self.assertTrue(torch.allclose(users.norm(dim=1), torch.ones(2)))
         self.assertTrue(torch.allclose(items.norm(dim=1), torch.ones(2)))
 
-    def test_in_batch_objective_has_one_class_per_item(self) -> None:
-        logits = self.model.in_batch_logits(
-            torch.tensor([0, 1, 2]), torch.tensor([3, 4, 5])
-        )
-        labels = torch.arange(3)
-        self.assertEqual(logits.shape, (3, 3))
-        self.assertTrue(torch.isfinite(F.cross_entropy(logits, labels)))
-
     def test_cosine_scoring_normalizes_raw_tower_outputs(self) -> None:
         model = TwoTower(
             num_users=5,
