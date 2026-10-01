@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from datasets import InteractionDataset
-from evaluation.evaluate import build_seen_items, retrieve_topk, single_target_metrics
+from evaluation.evaluate import build_seen_items, evaluate_retrieval_metrics
 from models import TwoTower
 from training.monitoring import (
     log_configuration,
@@ -241,15 +241,14 @@ def main() -> None:
 
         should_evaluate = epoch % args.eval_every == 0 or epoch == args.epochs
         if should_evaluate:
-            topk_items, targets = retrieve_topk(
+            final_metrics = evaluate_retrieval_metrics(
                 model,
                 validation,
                 seen_items,
-                max(args.ks),
+                args.ks,
                 args.batch_size,
                 device,
             )
-            final_metrics = single_target_metrics(topk_items, targets, args.ks)
             if args.selection_metric not in final_metrics:
                 available = ", ".join(final_metrics)
                 raise ValueError(

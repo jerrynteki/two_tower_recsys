@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -43,6 +44,15 @@ def build_seen_items(train: pd.DataFrame) -> dict[int, set[int]]:
     }
 
 
+def load_protocol(processed_dir: Path) -> str:
+    """Read the preprocessing protocol, defaulting for older artifacts."""
+    metadata_path = processed_dir / "metadata.json"
+    if not metadata_path.exists():
+        return "chronological"
+    with metadata_path.open(encoding="utf-8") as handle:
+        return str(json.load(handle).get("protocol", "chronological"))
+
+
 def mask_seen_items(
     scores: torch.Tensor,
     user_ids: torch.Tensor,
@@ -69,6 +79,36 @@ def retrieve_baseline_topk(
     seed: int = 42,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Retrieve with a non-learned random or popularity ranking rule."""
+    user_ids = torch.as_tensor(
+        interactions["user_idx"].to_numpy(), dtype=torch.long
+    )
+    retrieved = retrieve_baseline_topk_for_users(
+        train,
+        user_ids,
+        seen_items,
+        num_items,
+        max_k,
+        batch_size,
+        strategy,
+        seed,
+    )
+    targets = torch.as_tensor(
+        interactions["movie_idx"].to_numpy(), dtype=torch.long
+    )
+    return retrieved, targets
+
+
+def retrieve_baseline_topk_for_users(
+    train: pd.DataFrame,
+    user_ids: torch.Tensor,
+    seen_items: dict[int, set[int]],
+    num_items: int,
+    max_k: int,
+    batch_size: int,
+    strategy: str,
+    seed: int = 42,
+) -> torch.Tensor:
+    """Retrieve a baseline Top-K list once for each supplied user."""
     if strategy not in {"random", "popularity"}:
         raise ValueError("strategy must be 'random' or 'popularity'")
     if max_k <= 0 or max_k > num_items:
@@ -80,23 +120,19 @@ def retrieve_baseline_topk(
     ).float()
     generator = torch.Generator().manual_seed(seed)
     retrieved_batches: list[torch.Tensor] = []
-    target_batches: list[torch.Tensor] = []
 
-    for start in range(0, len(interactions), batch_size):
-        batch = interactions.iloc[start : start + batch_size]
-        user_ids = torch.as_tensor(batch["user_idx"].to_numpy(), dtype=torch.long)
-        target_items = torch.as_tensor(
-            batch["movie_idx"].to_numpy(), dtype=torch.long
-        )
+    for start in range(0, len(user_ids), batch_size):
+        batch_user_ids = user_ids[start : start + batch_size]
         if strategy == "popularity":
-            scores = popularity.unsqueeze(0).expand(len(batch), -1)
+            scores = popularity.unsqueeze(0).expand(len(batch_user_ids), -1)
         else:
-            scores = torch.rand(len(batch), num_items, generator=generator)
-        scores = mask_seen_items(scores, user_ids, seen_items)
+            scores = torch.rand(
+                len(batch_user_ids), num_items, generator=generator
+            )
+        scores = mask_seen_items(scores, batch_user_ids, seen_items)
         retrieved_batches.append(scores.topk(max_k, dim=1).indices)
-        target_batches.append(target_items)
 
-    return torch.cat(retrieved_batches), torch.cat(target_batches)
+    return torch.cat(retrieved_batches)
 
 
 @torch.no_grad()
@@ -109,27 +145,45 @@ def retrieve_topk(
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Retrieve full-catalog Top-K items for every evaluation user."""
+    user_ids = torch.as_tensor(
+        interactions["user_idx"].to_numpy(), dtype=torch.long
+    )
+    retrieved = retrieve_topk_for_users(
+        model, user_ids, seen_items, max_k, batch_size, device
+    )
+    targets = torch.as_tensor(
+        interactions["movie_idx"].to_numpy(), dtype=torch.long
+    )
+    return retrieved, targets
+
+
+@torch.no_grad()
+def retrieve_topk_for_users(
+    model: TwoTower,
+    user_ids: torch.Tensor,
+    seen_items: dict[int, set[int]],
+    max_k: int,
+    batch_size: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """Retrieve one full-catalog Top-K list for each supplied user."""
     all_item_ids = torch.arange(
         model.item_tower.embedding.num_embeddings, device=device
     )
     item_embeddings = model.item_tower(all_item_ids)
     retrieved_batches: list[torch.Tensor] = []
-    target_batches: list[torch.Tensor] = []
 
-    for start in range(0, len(interactions), batch_size):
-        batch = interactions.iloc[start : start + batch_size]
-        user_ids = torch.tensor(batch["user_idx"].to_numpy(), device=device)
-        target_items = torch.tensor(batch["movie_idx"].to_numpy(), device=device)
+    for start in range(0, len(user_ids), batch_size):
+        batch_user_ids = user_ids[start : start + batch_size].to(device)
 
-        user_embeddings = model.user_tower(user_ids)
+        user_embeddings = model.user_tower(batch_user_ids)
         scores = model.score_embeddings(user_embeddings, item_embeddings)
-        scores = mask_seen_items(scores, user_ids, seen_items)
+        scores = mask_seen_items(scores, batch_user_ids, seen_items)
         topk_items = scores.topk(max_k, dim=1).indices
 
         retrieved_batches.append(topk_items.cpu())
-        target_batches.append(target_items.cpu())
 
-    return torch.cat(retrieved_batches), torch.cat(target_batches)
+    return torch.cat(retrieved_batches)
 
 
 def single_target_metrics(
@@ -165,6 +219,119 @@ def single_target_metrics(
     return metrics
 
 
+def multi_target_metrics(
+    topk_items: torch.Tensor,
+    user_ids: torch.Tensor,
+    relevant_items: dict[int, set[int]],
+    ks: Iterable[int],
+) -> dict[str, float]:
+    """Calculate RecBole-style Recall and NDCG for multiple targets per user."""
+    if topk_items.ndim != 2:
+        raise ValueError("topk_items must have shape [num_users, max_k]")
+    if user_ids.ndim != 1 or len(user_ids) != len(topk_items):
+        raise ValueError("user_ids must have shape [num_users]")
+
+    metrics: dict[str, float] = {}
+    for k in sorted(set(ks)):
+        if k <= 0 or k > topk_items.shape[1]:
+            raise ValueError(f"k={k} is outside the available Top-K results")
+        recalls: list[float] = []
+        ndcgs: list[float] = []
+        discounts = 1.0 / torch.log2(torch.arange(2, k + 2).float())
+
+        for row, user_id in enumerate(user_ids.tolist()):
+            targets = relevant_items.get(int(user_id), set())
+            if not targets:
+                raise ValueError(f"user {user_id} has no relevant items")
+            relevance = torch.tensor(
+                [int(item in targets) for item in topk_items[row, :k].tolist()],
+                dtype=torch.float32,
+            )
+            recalls.append(float(relevance.sum().item() / len(targets)))
+            dcg = float((relevance * discounts).sum().item())
+            ideal_count = min(len(targets), k)
+            idcg = float(discounts[:ideal_count].sum().item())
+            ndcgs.append(dcg / idcg)
+
+        metrics[f"Recall@{k}"] = sum(recalls) / len(recalls)
+        metrics[f"NDCG@{k}"] = sum(ndcgs) / len(ndcgs)
+    return metrics
+
+
+def evaluate_retrieval_metrics(
+    model: TwoTower,
+    interactions: pd.DataFrame,
+    seen_items: dict[int, set[int]],
+    ks: Iterable[int],
+    batch_size: int,
+    device: torch.device,
+) -> dict[str, float]:
+    """Evaluate either a one-target or multi-target interaction split."""
+    ks = list(ks)
+    if interactions["user_idx"].is_unique:
+        topk_items, targets = retrieve_topk(
+            model,
+            interactions,
+            seen_items,
+            max(ks),
+            batch_size,
+            device,
+        )
+        return single_target_metrics(topk_items, targets, ks)
+
+    relevant_items = build_seen_items(interactions)
+    user_ids = torch.tensor(sorted(relevant_items), dtype=torch.long)
+    topk_items = retrieve_topk_for_users(
+        model,
+        user_ids,
+        seen_items,
+        max(ks),
+        batch_size,
+        device,
+    )
+    return multi_target_metrics(topk_items, user_ids, relevant_items, ks)
+
+
+def evaluate_baseline_metrics(
+    train: pd.DataFrame,
+    interactions: pd.DataFrame,
+    seen_items: dict[int, set[int]],
+    num_items: int,
+    ks: Iterable[int],
+    batch_size: int,
+    strategy: str,
+    seed: int = 42,
+) -> dict[str, float]:
+    """Evaluate a random or popularity baseline on either split type."""
+    ks = list(ks)
+    if interactions["user_idx"].is_unique:
+        topk_items, targets = retrieve_baseline_topk(
+            train,
+            interactions,
+            seen_items,
+            num_items,
+            max(ks),
+            batch_size,
+            strategy,
+            seed,
+        )
+        return single_target_metrics(topk_items, targets, ks)
+
+    relevant_items = build_seen_items(interactions)
+    user_ids = torch.tensor(sorted(relevant_items), dtype=torch.long)
+    topk_items = retrieve_baseline_topk_for_users(
+        train,
+        user_ids,
+        seen_items,
+        num_items,
+        max(ks),
+        batch_size,
+        strategy,
+        seed,
+    )
+    return multi_target_metrics(topk_items, user_ids, relevant_items, ks)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -187,38 +354,42 @@ def main() -> None:
     model = load_model(args.checkpoint, device)
     train = pd.read_csv(args.processed_dir / "train.csv")
     evaluation_data = pd.read_csv(args.processed_dir / f"{args.split}.csv")
+    protocol = load_protocol(args.processed_dir)
     max_k = max(args.ks)
     if max_k > model.item_tower.embedding.num_embeddings:
         raise ValueError("requested K is larger than the movie catalog")
 
-    topk_items, target_items = retrieve_topk(
-        model,
-        evaluation_data,
-        build_seen_items(train),
-        max_k,
-        args.batch_size,
-        device,
-    )
-    results = {"two_tower": single_target_metrics(topk_items, target_items, args.ks)}
+    history = train
+    if protocol == "flowcf" and args.split == "test":
+        validation = pd.read_csv(args.processed_dir / "val.csv")
+        history = pd.concat((train, validation), ignore_index=True)
+    seen_items = build_seen_items(history)
+    results = {
+        "two_tower": evaluate_retrieval_metrics(
+            model,
+            evaluation_data,
+            seen_items,
+            args.ks,
+            args.batch_size,
+            device,
+        )
+    }
     if not args.no_baselines:
-        seen_items = build_seen_items(train)
         for strategy in ("random", "popularity"):
-            baseline_items, baseline_targets = retrieve_baseline_topk(
+            results[strategy] = evaluate_baseline_metrics(
                 train,
                 evaluation_data,
                 seen_items,
                 model.item_tower.embedding.num_embeddings,
-                max_k,
+                args.ks,
                 args.batch_size,
                 strategy,
                 args.seed,
             )
-            results[strategy] = single_target_metrics(
-                baseline_items, baseline_targets, args.ks
-            )
 
     print(
-        f"device: {device} | split: {args.split} | users: {len(evaluation_data):,} "
+        f"device: {device} | protocol: {protocol} | split: {args.split} "
+        f"| users: {evaluation_data['user_idx'].nunique():,} "
         f"| catalog: {model.item_tower.embedding.num_embeddings:,}"
     )
     for method, metrics in results.items():
