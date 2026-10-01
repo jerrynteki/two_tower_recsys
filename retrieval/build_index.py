@@ -29,7 +29,9 @@ def build(checkpoint: Path, output_dir: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint", type=Path, default=Path("checkpoints/two_tower.pt"))
+    parser.add_argument(
+        "--checkpoint", type=Path, default=Path("checkpoints/two_tower_1m.pt")
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("artifacts/faiss"))
     args = parser.parse_args()
     build(args.checkpoint, args.output_dir)

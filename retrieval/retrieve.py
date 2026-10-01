@@ -17,8 +17,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--user-id", type=int, required=True)
     parser.add_argument("--top-k", type=int, default=10)
-    parser.add_argument("--checkpoint", type=Path, default=Path("checkpoints/two_tower.pt"))
-    parser.add_argument("--processed-dir", type=Path, default=Path("data/processed"))
+    parser.add_argument(
+        "--checkpoint", type=Path, default=Path("checkpoints/two_tower_1m.pt")
+    )
+    parser.add_argument(
+        "--processed-dir", type=Path, default=Path("data/processed-1m")
+    )
     parser.add_argument("--index-dir", type=Path, default=Path("artifacts/faiss"))
     args = parser.parse_args()
     with (args.processed_dir / "user2idx.json").open() as handle:

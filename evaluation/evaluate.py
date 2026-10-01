@@ -167,8 +167,12 @@ def single_target_metrics(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint", type=Path, default=Path("checkpoints/two_tower.pt"))
-    parser.add_argument("--processed-dir", type=Path, default=Path("data/processed"))
+    parser.add_argument(
+        "--checkpoint", type=Path, default=Path("checkpoints/two_tower_1m.pt")
+    )
+    parser.add_argument(
+        "--processed-dir", type=Path, default=Path("data/processed-1m")
+    )
     parser.add_argument("--split", choices=("val", "test"), default="val")
     parser.add_argument("--ks", type=int, nargs="+", default=[10, 50, 100])
     parser.add_argument("--batch-size", type=int, default=256)

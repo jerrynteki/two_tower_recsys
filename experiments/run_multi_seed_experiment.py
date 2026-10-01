@@ -20,7 +20,9 @@ from training.train import load_catalog_sizes
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--processed-dir", type=Path, default=Path("data/processed"))
+    parser.add_argument(
+        "--processed-dir", type=Path, default=Path("data/processed-1m")
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("artifacts/multi_seed"))
     parser.add_argument(
         "--trials-output",

@@ -18,7 +18,9 @@ from training.train import load_catalog_sizes, select_device, train_one_epoch
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--processed-dir", type=Path, default=Path("data/processed"))
+    parser.add_argument(
+        "--processed-dir", type=Path, default=Path("data/processed-1m")
+    )
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--negative-count", type=int, default=32)

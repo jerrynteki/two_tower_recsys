@@ -32,7 +32,9 @@ def evaluate(model, targets: pd.DataFrame, seen: dict[int, set[int]], num_items:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--processed-dir", type=Path, default=Path("data/processed"))
+    parser.add_argument(
+        "--processed-dir", type=Path, default=Path("data/processed-1m")
+    )
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--cold-items", type=int, default=100)
     parser.add_argument("--output", type=Path, default=Path("artifacts/cold_start_experiment.csv"))

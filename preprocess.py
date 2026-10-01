@@ -1,4 +1,4 @@
-"""Prepare MovieLens 100K or 1M interactions for two-tower retrieval."""
+"""Prepare MovieLens 1M interactions for two-tower retrieval."""
 
 from __future__ import annotations
 
@@ -9,17 +9,16 @@ from pathlib import Path
 import pandas as pd
 
 
-RAW_PATH = Path("data/raw/u.data")
-OUTPUT_DIR = Path("data/processed")
+RAW_PATH = Path("data/raw/ml-1m/ratings.dat")
+OUTPUT_DIR = Path("data/processed-1m")
 
 
-def load_data(path: Path = RAW_PATH, dataset: str = "100k") -> pd.DataFrame:
-    if dataset not in {"100k", "1m"}:
-        raise ValueError("dataset must be '100k' or '1m'")
+def load_data(path: Path = RAW_PATH) -> pd.DataFrame:
+    """Load the ``ratings.dat`` format distributed with MovieLens 1M."""
     return pd.read_csv(
         path,
-        sep="\t" if dataset == "100k" else "::",
-        engine="c" if dataset == "100k" else "python",
+        sep="::",
+        engine="python",
         names=["user_id", "movie_id", "rating", "timestamp"],
         dtype={
             "user_id": "int64",
@@ -32,7 +31,6 @@ def load_data(path: Path = RAW_PATH, dataset: str = "100k") -> pd.DataFrame:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", choices=("100k", "1m"), default="100k")
     parser.add_argument("--raw-path", type=Path)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--min-positive-rating", type=int, default=4)
@@ -153,18 +151,14 @@ def save_processed_data(
 
 def main() -> None:
     args = parse_args()
-    raw_path = args.raw_path or (
-        RAW_PATH if args.dataset == "100k" else Path("data/raw/ml-1m/ratings.dat")
-    )
-    output_dir = args.output_dir or (
-        OUTPUT_DIR if args.dataset == "100k" else Path("data/processed-1m")
-    )
+    raw_path = args.raw_path or RAW_PATH
+    output_dir = args.output_dir or OUTPUT_DIR
     if not raw_path.exists():
         raise FileNotFoundError(
-            f"Missing {raw_path}. Download MovieLens {args.dataset} and place "
-            "the ratings file there."
+            f"Missing {raw_path}. Download and extract MovieLens 1M so that "
+            "ratings.dat is available at this path."
         )
-    ratings = load_data(raw_path, args.dataset)
+    ratings = load_data(raw_path)
     interactions = filter_positive_interactions(
         ratings, args.min_positive_rating
     )
@@ -188,7 +182,7 @@ def main() -> None:
         output_dir,
     )
 
-    print(f"Preprocessing complete | dataset: MovieLens {args.dataset}")
+    print("Preprocessing complete | dataset: MovieLens 1M")
     print(f"users: {len(user2idx):,} | movies: {len(movie2idx):,}")
     print(f"train: {len(train):,} | val: {len(val):,} | test: {len(test):,}")
     print(f"observed train negatives: {len(observed_negatives):,}")

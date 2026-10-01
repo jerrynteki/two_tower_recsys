@@ -16,7 +16,7 @@ class PreprocessTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            result = load_data(path, dataset="1m")
+            result = load_data(path)
 
         self.assertEqual(result.columns.tolist(), [
             "user_id", "movie_id", "rating", "timestamp"

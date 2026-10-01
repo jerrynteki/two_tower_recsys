@@ -1,10 +1,9 @@
-# MovieLens Two-Tower Retrieval
+# MovieLens 1M Two-Tower Retrieval
 
 A from-scratch PyTorch implementation of two-tower candidate retrieval for
-MovieLens 100K, with the same pipeline supporting MovieLens 1M. The project
-covers chronological splitting, configurable negative sampling, full-catalog
-evaluation, TensorBoard monitoring, controlled experiments, cold-start item
-features, and FAISS retrieval.
+MovieLens 1M. The project covers chronological splitting, configurable negative
+sampling, full-catalog evaluation, TensorBoard monitoring, controlled
+experiments, cold-start item features, and FAISS retrieval.
 
 ## How the model works
 
@@ -16,14 +15,12 @@ movie_idx -> ItemTower -> item embedding ----+
 
 The default objective compares each observed user-movie pair with 64 uniformly
 sampled unseen movies. The positive movie is placed in column zero, and cross
-entropy trains it to outrank the sampled negatives. The training command also
-supports in-batch, popularity-weighted, and hybrid observed-negative sampling.
+entropy trains it to outrank the sampled negatives. Training also supports
+in-batch, popularity-weighted, and hybrid observed-negative sampling.
 
 ## Reading order
 
-Read the implementation in dependency order:
-
-1. [`preprocess.py`](preprocess.py) loads MovieLens ratings, creates implicit
+1. [`preprocess.py`](preprocess.py) loads MovieLens 1M ratings, creates implicit
    feedback, maps raw IDs to embedding indices, and writes chronological train,
    validation, and test splits.
 2. [`datasets.py`](datasets.py) exposes processed user-movie pairs to a PyTorch
@@ -38,24 +35,18 @@ Read the implementation in dependency order:
 6. [`evaluation/evaluate.py`](evaluation/evaluate.py) performs full-catalog
    retrieval, masks training-seen movies, reports Recall, HitRate, MRR, and
    NDCG, and compares against random and popularity baselines.
-7. [`experiments/run_model_experiments.py`](experiments/run_model_experiments.py)
-   compares embedding and similarity configurations.
-8. [`experiments/run_negative_sampling_experiments.py`](experiments/run_negative_sampling_experiments.py)
-   compares negative-sampling strategies.
-9. [`experiments/run_multi_seed_experiment.py`](experiments/run_multi_seed_experiment.py)
-   repeats the selected configuration and reports mean and standard deviation.
-10. [`features/prepare_movie_features.py`](features/prepare_movie_features.py),
-    [`models/feature_two_tower.py`](models/feature_two_tower.py), and
-    [`experiments/run_cold_start_experiment.py`](experiments/run_cold_start_experiment.py)
-    implement the content-feature cold-start experiment.
-11. [`retrieval/build_index.py`](retrieval/build_index.py) and
-    [`retrieval/retrieve.py`](retrieval/retrieve.py) build and query a FAISS
-    item index.
-12. [`tests/`](tests) verifies preprocessing, sampling, model behavior,
-    evaluation metrics, monitoring, and retrieval.
+7. [`experiments/`](experiments) contains controlled model, negative-sampling,
+   multi-seed, and cold-start experiments.
+8. [`features/prepare_movie_features.py`](features/prepare_movie_features.py)
+   converts `movies.dat` genres and release years into model features.
+9. [`retrieval/build_index.py`](retrieval/build_index.py) and
+   [`retrieval/retrieve.py`](retrieval/retrieve.py) build and query a FAISS item
+   index.
+10. [`tests/`](tests) verifies preprocessing, sampling, model behavior,
+    evaluation metrics, monitoring, features, and retrieval.
 
 ```text
-MovieLens ratings
+MovieLens 1M ratings
        |
        v
 preprocess.py -> CSV splits and ID mappings
@@ -82,26 +73,40 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Quick start: MovieLens 100K
+Download and extract MovieLens 1M so these files exist:
 
-The repository defaults to MovieLens 100K paths. Rebuild the processed files,
-train the selected configuration, and evaluate it with:
+```text
+data/raw/ml-1m/ratings.dat
+data/raw/ml-1m/movies.dat
+data/raw/ml-1m/users.dat
+```
+
+## Run the pipeline
+
+All defaults point to MovieLens 1M:
 
 ```bash
 python preprocess.py
 python -m training.train
-python -m evaluation.evaluate \
-  --checkpoint checkpoints/two_tower.pt \
-  --processed-dir data/processed \
-  --split val
+python -m evaluation.evaluate --split val
 ```
 
 Training defaults to 128-dimensional embeddings, 64 uniform negatives per
-positive interaction, checkpoint selection by NDCG@10, and early stopping.
-The training script uses CUDA when available, then Apple Metal (`mps`), and
-otherwise CPU.
+positive interaction, checkpoint selection by NDCG@10, and early stopping. It
+uses CUDA when available, then Apple Metal (`mps`), and otherwise CPU. The best
+checkpoint is saved to `checkpoints/two_tower_1m.pt`.
 
-### TensorBoard
+Before a full run, verify the pipeline with one epoch:
+
+```bash
+python -m training.train \
+  --epochs 1 \
+  --no-early-stopping \
+  --output artifacts/ml1m_smoke.pt \
+  --run-name ml1m_smoke
+```
+
+## TensorBoard
 
 Training records loss, retrieval metrics, learning rate, throughput, epoch
 duration, and embedding statistics. Keep training in one terminal and start the
@@ -113,43 +118,6 @@ tensorboard --logdir runs
 
 Open `http://localhost:6006`. Label runs with `--run-name`, or disable logging
 with `--no-tensorboard`.
-
-## MovieLens 1M
-
-Download and extract MovieLens 1M so the ratings file is available at:
-
-```text
-data/raw/ml-1m/ratings.dat
-```
-
-Keep its artifacts separate from the default 100K pipeline:
-
-```bash
-python preprocess.py --dataset 1m
-
-python -m training.train \
-  --processed-dir data/processed-1m \
-  --observed-negatives data/processed-1m/train_negatives.csv \
-  --output checkpoints/two_tower_1m.pt \
-  --run-name ml1m
-
-python -m evaluation.evaluate \
-  --processed-dir data/processed-1m \
-  --checkpoint checkpoints/two_tower_1m.pt \
-  --split val
-```
-
-Before a full run, verify the larger-data path with one epoch:
-
-```bash
-python -m training.train \
-  --processed-dir data/processed-1m \
-  --observed-negatives data/processed-1m/train_negatives.csv \
-  --epochs 1 \
-  --no-early-stopping \
-  --output artifacts/ml1m_smoke.pt \
-  --run-name ml1m_smoke
-```
 
 ## Experiments
 
@@ -188,7 +156,8 @@ python -m training.train --negative-strategy hybrid
 
 ### Cold-start item features
 
-Place the MovieLens 100K metadata file at `data/raw/u.item`, then run:
+Create genre and release-year features from MovieLens 1M `movies.dat`, then run
+the cold-start comparison:
 
 ```bash
 python -m features.prepare_movie_features
@@ -206,8 +175,8 @@ python -m retrieval.retrieve --user-id 1 --top-k 10
 ```
 
 Because the vectors are L2-normalized, inner-product ranking is equivalent to
-cosine-similarity ranking. The exact index is appropriate for MovieLens and can
-later be replaced behind the same interface by an approximate index for a much
+cosine-similarity ranking. The exact index is appropriate for MovieLens 1M and
+can later be replaced behind the same interface by an approximate index for a
 larger catalog.
 
 ## Data protocol
@@ -222,22 +191,12 @@ Ratings of 1 or 2 before the validation boundary are exported to
 persisted as contiguous mappings because the same embedding-row meanings must
 be reused during validation and retrieval.
 
-## Committed benchmark results
-
-The selected MovieLens 100K configuration was repeated with seeds 42, 43, and
-44. These are validation results; the test split remains reserved.
-
-| Method | Recall@10 | Recall@50 | Recall@100 | NDCG@10 |
-| --- | ---: | ---: | ---: | ---: |
-| Popularity | 0.0626 | 0.2208 | 0.3429 | 0.0317 |
-| Two-tower mean | 0.1157 | 0.3443 | 0.5134 | 0.0599 |
-
-The two-tower standard deviations were 0.0032, 0.0006, 0.0128, and 0.0034,
-respectively.
+## Current verified result
 
 The committed one-epoch MovieLens 1M smoke run produced Recall@10/50/100 of
 0.0434/0.1503/0.2459. Its popularity baseline produced
-0.0457/0.1478/0.2408. This verifies the pipeline; it is not a tuned benchmark.
+0.0457/0.1478/0.2408. This verifies the end-to-end pipeline; it is not a tuned
+benchmark.
 
 ## Tests
 

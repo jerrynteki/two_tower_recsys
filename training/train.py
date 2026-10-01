@@ -76,8 +76,12 @@ def load_catalog_sizes(processed_dir: Path) -> tuple[int, int]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--processed-dir", type=Path, default=Path("data/processed"))
-    parser.add_argument("--output", type=Path, default=Path("checkpoints/two_tower.pt"))
+    parser.add_argument(
+        "--processed-dir", type=Path, default=Path("data/processed-1m")
+    )
+    parser.add_argument(
+        "--output", type=Path, default=Path("checkpoints/two_tower_1m.pt")
+    )
     parser.add_argument("--epochs", type=int, default=12)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--embedding-dim", type=int, default=128)
@@ -92,7 +96,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--observed-negatives",
         type=Path,
-        default=Path("data/processed/train_negatives.csv"),
+        default=Path("data/processed-1m/train_negatives.csv"),
     )
     parser.add_argument("--observed-negative-fraction", type=float, default=0.5)
     parser.add_argument("--similarity", choices=("dot", "cosine"), default="dot")
@@ -110,7 +114,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-delta", type=float, default=1e-4)
     parser.add_argument("--no-early-stopping", action="store_true")
     parser.add_argument("--log-dir", type=Path, default=Path("runs/training"))
-    parser.add_argument("--run-name", default="two_tower")
+    parser.add_argument("--run-name", default="two_tower_1m")
     parser.add_argument(
         "--no-tensorboard",
         action="store_true",
