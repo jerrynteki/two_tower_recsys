@@ -8,6 +8,7 @@ import random
 import time
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader
@@ -16,6 +17,11 @@ from torch.utils.tensorboard import SummaryWriter
 from datasets import InteractionDataset
 from evaluation.evaluate import build_seen_items, evaluate_retrieval_metrics
 from models import TwoTower
+from training.checkpointing import (
+    capture_random_state,
+    restore_random_state,
+    save_checkpoint,
+)
 from training.monitoring import (
     log_configuration,
     log_model_statistics,
@@ -25,6 +31,25 @@ from training.monitoring import (
 from training.negative_sampling import (
     UniformNegativeSampler,
     train_sampled_epoch,
+)
+
+
+# These settings define the training trajectory and are restored on resume.
+RESUME_SETTINGS = (
+    "processed_dir",
+    "batch_size",
+    "embedding_dim",
+    "learning_rate",
+    "temperature",
+    "negative_count",
+    "similarity",
+    "normalize_embeddings",
+    "seed",
+    "ks",
+    "eval_every",
+    "selection_metric",
+    "patience",
+    "min_delta",
 )
 
 
@@ -50,7 +75,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output", type=Path, default=Path("checkpoints/two_tower_1m.pt")
     )
-    parser.add_argument("--epochs", type=int, default=12)
+    parser.add_argument(
+        "--latest-checkpoint", type=Path,
+        help="resumable checkpoint path (default: <output stem>.latest<suffix>)",
+    )
+    parser.add_argument(
+        "--resume", type=Path,
+        help="resume from a latest checkpoint, restoring its training settings",
+    )
+    parser.add_argument(
+        "--epochs", type=int, default=12,
+        help="total epoch limit, including completed epochs",
+    )
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--embedding-dim", type=int, default=128)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
@@ -82,6 +118,30 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    checkpoint = None
+    if args.resume is not None:
+        checkpoint = torch.load(args.resume, map_location="cpu", weights_only=True)
+        if checkpoint.get("checkpoint_version") != 1:
+            raise ValueError(
+                "--resume requires a resumable latest checkpoint, not a best-model export"
+            )
+        for name in RESUME_SETTINGS:
+            setattr(args, name, checkpoint["training_config"][name])
+        args.processed_dir = Path(args.processed_dir)
+        args.no_early_stopping = (
+            args.no_early_stopping or checkpoint["training_config"]["no_early_stopping"]
+        )
+        if args.epochs < checkpoint["epoch"]:
+            raise ValueError("epochs must be at least the checkpoint's completed epoch")
+    if args.epochs <= 0:
+        raise ValueError("epochs must be positive")
+    latest_path = args.latest_checkpoint or args.output.with_name(
+        f"{args.output.stem}.latest{args.output.suffix}"
+    )
+    if args.output.resolve() == latest_path.resolve() or (
+        args.resume is not None and args.output.resolve() == args.resume.resolve()
+    ):
+        raise ValueError("best-model output must differ from resumable checkpoint paths")
     if args.eval_every <= 0:
         raise ValueError("eval-every must be positive")
     if not args.ks or any(k <= 0 for k in args.ks):
@@ -91,6 +151,7 @@ def main() -> None:
     if args.patience <= 0:
         raise ValueError("patience must be positive")
     random.seed(args.seed)
+    np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     device = select_device()
 
@@ -107,6 +168,10 @@ def main() -> None:
         generator=generator,
     )
     num_users, num_items = load_catalog_sizes(args.processed_dir)
+    if checkpoint is not None and (
+        checkpoint["num_users"] != num_users or checkpoint["num_items"] != num_items
+    ):
+        raise ValueError("checkpoint catalog sizes do not match the processed data")
     sampler = UniformNegativeSampler(num_items, seen_items, seed=args.seed)
     model = TwoTower(
         num_users,
@@ -148,7 +213,29 @@ def main() -> None:
     best_metric = float("-inf")
     best_epoch = 0
     evaluations_without_improvement = 0
-    for epoch in range(1, args.epochs + 1):
+    start_epoch = 1
+    stopped_early = False
+    if checkpoint is not None:
+        model.load_state_dict(checkpoint["model_state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        best_state_dict = checkpoint["best_model_state_dict"]
+        best_metrics = checkpoint["best_validation_metrics"]
+        final_metrics = checkpoint["validation_metrics"]
+        early_stopping = checkpoint["early_stopping"]
+        best_metric = early_stopping["best_metric"]
+        best_epoch = early_stopping["best_epoch"]
+        evaluations_without_improvement = early_stopping["evaluations_without_improvement"]
+        stopped_early = early_stopping["stopped"] and not args.no_early_stopping
+        start_epoch = checkpoint["epoch"] + 1
+        restore_random_state(checkpoint["random_state"], generator, sampler.generator)
+        print(f"resumed: {args.resume.resolve()} | completed epoch: {start_epoch - 1}")
+        if stopped_early:
+            print("checkpoint already early-stopped; use --no-early-stopping to continue")
+    training_config = {name: getattr(args, name) for name in RESUME_SETTINGS}
+    training_config["processed_dir"] = str(args.processed_dir.resolve())
+    training_config["no_early_stopping"] = args.no_early_stopping
+    end_epoch = start_epoch if stopped_early else args.epochs + 1
+    for epoch in range(start_epoch, end_epoch):
         epoch_started = time.perf_counter()
         train_started = time.perf_counter()
         loss = train_sampled_epoch(
@@ -227,11 +314,34 @@ def main() -> None:
                 )
             writer.add_scalar("performance/total_epoch_seconds", total_elapsed, epoch)
         print(message)
-        if (
+        stopped_early = (
             should_evaluate
             and not args.no_early_stopping
             and evaluations_without_improvement >= args.patience
-        ):
+        )
+        save_checkpoint(
+            {
+                "checkpoint_version": 1,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "epoch": epoch,
+                "num_users": num_users,
+                "num_items": num_items,
+                "training_config": training_config,
+                "best_model_state_dict": best_state_dict,
+                "best_validation_metrics": best_metrics,
+                "validation_metrics": final_metrics,
+                "early_stopping": {
+                    "best_metric": best_metric,
+                    "best_epoch": best_epoch,
+                    "evaluations_without_improvement": evaluations_without_improvement,
+                    "stopped": stopped_early,
+                },
+                "random_state": capture_random_state(generator, sampler.generator),
+            },
+            latest_path,
+        )
+        if stopped_early:
             print(
                 f"early stopping: {args.selection_metric} did not improve "
                 f"for {args.patience} evaluations"
@@ -243,8 +353,7 @@ def main() -> None:
     model.load_state_dict(best_state_dict)
     final_metrics = best_metrics
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(
+    save_checkpoint(
         {
             "model_state_dict": model.state_dict(),
             "num_users": num_users,
@@ -266,6 +375,8 @@ def main() -> None:
         f"best epoch: {best_epoch} | {args.selection_metric}: {best_metric:.4f}"
     )
     print(f"checkpoint: {args.output.resolve()}")
+    saved_latest_path = args.resume if start_epoch == end_epoch else latest_path
+    print(f"resumable checkpoint: {saved_latest_path.resolve()}")
     if writer:
         writer.add_hparams(config, {f"final/{key}": value for key, value in final_metrics.items()})
         writer.close()

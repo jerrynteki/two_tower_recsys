@@ -124,6 +124,33 @@ Then open `http://localhost:6006`. Use `--run-name` to label a run or
 python -m training.train --epochs 5 --run-name dim128 --embedding-dim 128
 ```
 
+Training also atomically saves a resumable checkpoint after every completed
+epoch. By default, `checkpoints/two_tower_1m.latest.pt` contains the latest model,
+Adam optimizer, completed epoch, best model and validation results, early-stopping
+counter, and Python, NumPy, PyTorch CPU/CUDA/MPS, shuffle, and negative-sampling
+random states. The `--output` file remains the best-model export for evaluation
+and retrieval. Use `--latest-checkpoint` to choose a different resume-file path.
+
+Resume an interrupted run with:
+
+```bash
+python -m training.train --resume checkpoints/two_tower_1m.latest.pt --epochs 12
+```
+
+`--epochs` is the total epoch limit, including epochs already completed. Resume
+restores the saved data path, model, sampling, optimizer, and validation settings;
+corresponding CLI settings are ignored. Output paths and TensorBoard options
+come from the new command, and logging starts a new run at the resumed epoch.
+For a custom output location, pass `--output` again. A checkpoint that has already
+early-stopped stays stopped unless `--no-early-stopping` is supplied.
+
+Resume starts at the next epoch; work from an interrupted partial epoch is
+repeated. Keep the processed data, device, software environment, and total epoch
+limit unchanged to reproduce the original trajectory (subject to backend
+determinism). Extending the epoch limit is supported, but the trainer also
+evaluates at the final epoch, so changing that limit can change validation timing.
+Older best-model exports do not contain enough state to resume training.
+
 Evaluate full-catalog retrieval on the validation split. This reports the
 two-tower model and fixed random and popularity baselines under the same
 seen-item masking rules:
