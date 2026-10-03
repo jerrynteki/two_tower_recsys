@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import subprocess
 import time
 from pathlib import Path
 
@@ -69,6 +70,31 @@ def load_catalog_sizes(processed_dir: Path) -> tuple[int, int]:
     return num_users, num_items
 
 
+def send_completion_notification(run_name: str, best_epoch: int) -> None:
+    """Show a macOS notification after a successful training run.
+
+    ``osascript`` is unavailable on non-macOS platforms, so notification
+    failures are intentionally ignored and never affect training results.
+    """
+    try:
+        subprocess.run(
+            [
+                "osascript",
+                "-e",
+                (
+                    'display notification "Best checkpoint: epoch '
+                    f'{best_epoch}." with title "Two-Tower Training" '
+                    f'subtitle "{run_name}" sound name "Glass"'
+                ),
+            ],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except FileNotFoundError:
+        pass
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--processed-dir", type=Path, default=Path("data/processed-1m"))
@@ -108,6 +134,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-early-stopping", action="store_true")
     parser.add_argument("--log-dir", type=Path, default=Path("runs/training"))
     parser.add_argument("--run-name", default="two_tower_1m")
+    parser.add_argument(
+        "--notify",
+        action="store_true",
+        help="show a macOS notification when training completes successfully",
+    )
     parser.add_argument(
         "--no-tensorboard",
         action="store_true",
@@ -381,6 +412,8 @@ def main() -> None:
         writer.add_hparams(config, {f"final/{key}": value for key, value in final_metrics.items()})
         writer.close()
         print(f"tensorboard: {run_dir.resolve()}")
+    if args.notify:
+        send_completion_notification(args.run_name, best_epoch)
 
 
 if __name__ == "__main__":
