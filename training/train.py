@@ -7,6 +7,7 @@ import json
 import random
 import subprocess
 import time
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -148,6 +149,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    run_started_at = datetime.now().astimezone()
+    run_started_clock = time.perf_counter()
     args = parse_args()
     checkpoint = None
     if args.resume is not None:
@@ -412,6 +415,16 @@ def main() -> None:
         writer.add_hparams(config, {f"final/{key}": value for key, value in final_metrics.items()})
         writer.close()
         print(f"tensorboard: {run_dir.resolve()}")
+    run_finished_at = datetime.now().astimezone()
+    elapsed_seconds = time.perf_counter() - run_started_clock
+    elapsed_hours, remainder = divmod(int(elapsed_seconds), 3600)
+    elapsed_minutes, elapsed_seconds_remainder = divmod(remainder, 60)
+    print(f"started at: {run_started_at.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    print(f"finished at: {run_finished_at.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    print(
+        "total training time: "
+        f"{elapsed_hours}h {elapsed_minutes}m {elapsed_seconds_remainder}s"
+    )
     if args.notify:
         send_completion_notification(args.run_name, best_epoch)
 
