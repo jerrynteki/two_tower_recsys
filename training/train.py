@@ -405,12 +405,6 @@ def main() -> None:
         },
         args.output,
     )
-    print(
-        f"best epoch: {best_epoch} | {args.selection_metric}: {best_metric:.4f}"
-    )
-    print(f"checkpoint: {args.output.resolve()}")
-    saved_latest_path = args.resume if start_epoch == end_epoch else latest_path
-    print(f"resumable checkpoint: {saved_latest_path.resolve()}")
     if writer:
         writer.add_hparams(config, {f"final/{key}": value for key, value in final_metrics.items()})
         writer.close()
@@ -419,12 +413,16 @@ def main() -> None:
     elapsed_seconds = time.perf_counter() - run_started_clock
     elapsed_hours, remainder = divmod(int(elapsed_seconds), 3600)
     elapsed_minutes, elapsed_seconds_remainder = divmod(remainder, 60)
-    print(f"started at: {run_started_at.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-    print(f"finished at: {run_finished_at.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     print(
-        "total training time: "
-        f"{elapsed_hours}h {elapsed_minutes}m {elapsed_seconds_remainder}s"
+        f"best epoch: {best_epoch} | {args.selection_metric}: {best_metric:.4f}"
+        f" | started: {run_started_at.strftime('%Y-%m-%d %H:%M:%S %Z')}"
+        f" | finished: {run_finished_at.strftime('%Y-%m-%d %H:%M:%S %Z')}"
+        f" | duration: {elapsed_hours}h {elapsed_minutes}m "
+        f"{elapsed_seconds_remainder}s"
     )
+    print(f"checkpoint: {args.output.resolve()}")
+    saved_latest_path = args.resume if start_epoch == end_epoch else latest_path
+    print(f"resumable checkpoint: {saved_latest_path.resolve()}")
     if args.notify:
         send_completion_notification(args.run_name, best_epoch)
 
