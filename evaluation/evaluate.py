@@ -30,6 +30,7 @@ def load_model(checkpoint_path: Path, device: torch.device) -> TwoTower:
         temperature=checkpoint["temperature"],
         normalize_embeddings=checkpoint.get("normalize_embeddings", True),
         similarity=checkpoint.get("similarity", "dot"),
+        architecture=checkpoint.get("architecture", "mlp"),
     ).to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()

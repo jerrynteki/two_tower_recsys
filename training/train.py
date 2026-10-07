@@ -46,6 +46,7 @@ RESUME_SETTINGS = (
     "negative_count",
     "similarity",
     "normalize_embeddings",
+    "architecture",
     "seed",
     "ks",
     "eval_every",
@@ -121,6 +122,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--negative-count", type=int, default=64)
     parser.add_argument("--similarity", choices=("dot", "cosine"), default="dot")
     parser.add_argument(
+        "--architecture",
+        choices=("mlp", "embedding", "residual_mlp"),
+        default="mlp",
+        help="tower structure: current MLP, direct ID embeddings, or residual MLP",
+    )
+    parser.add_argument(
         "--no-normalize",
         action="store_false",
         dest="normalize_embeddings",
@@ -160,7 +167,12 @@ def main() -> None:
                 "--resume requires a resumable latest checkpoint, not a best-model export"
             )
         for name in RESUME_SETTINGS:
-            setattr(args, name, checkpoint["training_config"][name])
+            value = checkpoint["training_config"].get(name)
+            if name == "architecture" and value is None:
+                value = "mlp"
+            if value is None:
+                raise ValueError(f"resume checkpoint is missing training setting {name!r}")
+            setattr(args, name, value)
         args.processed_dir = Path(args.processed_dir)
         args.no_early_stopping = (
             args.no_early_stopping or checkpoint["training_config"]["no_early_stopping"]
@@ -214,6 +226,7 @@ def main() -> None:
         temperature=args.temperature,
         normalize_embeddings=args.normalize_embeddings,
         similarity=args.similarity,
+        architecture=args.architecture,
     ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
     run_dir = timestamped_run_dir(args.log_dir, args.run_name)
@@ -230,6 +243,7 @@ def main() -> None:
         "num_users": num_users,
         "seed": args.seed,
         "similarity": args.similarity,
+        "architecture": args.architecture,
         "temperature": args.temperature,
         "selection_metric": args.selection_metric,
         "patience": args.patience,
@@ -396,6 +410,7 @@ def main() -> None:
             "temperature": args.temperature,
             "normalize_embeddings": args.normalize_embeddings,
             "similarity": args.similarity,
+            "architecture": args.architecture,
             "negative_strategy": "uniform",
             "negative_count": args.negative_count,
             "best_epoch": best_epoch,
