@@ -62,7 +62,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--negative-count", type=int, default=64)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
-    parser.add_argument("--ks", type=int, nargs="+", default=[10, 50, 100])
+    parser.add_argument("--ks", type=int, nargs="+", default=[10, 20])
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--log-dir", type=Path, default=Path("runs/model_experiments_1m")

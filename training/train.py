@@ -99,7 +99,9 @@ def send_completion_notification(run_name: str, best_epoch: int) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--processed-dir", type=Path, default=Path("data/processed-1m"))
+    parser.add_argument(
+        "--processed-dir", type=Path, default=Path("data/processed-1m")
+    )
     parser.add_argument(
         "--output", type=Path, default=Path("checkpoints/two_tower_1m.pt")
     )
@@ -134,7 +136,7 @@ def parse_args() -> argparse.Namespace:
         help="disable L2 normalization at each tower output",
     )
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--ks", type=int, nargs="+", default=[10, 50, 100])
+    parser.add_argument("--ks", type=int, nargs="+", default=[10, 20])
     parser.add_argument("--eval-every", type=int, default=1)
     parser.add_argument("--selection-metric", default="NDCG@10")
     parser.add_argument("--patience", type=int, default=3)

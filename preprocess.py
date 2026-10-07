@@ -12,9 +12,8 @@ import torch
 
 RAW_PATH = Path("data/raw/ml-1m/ratings.dat")
 OUTPUT_DIR = Path("data/processed-1m")
-FLOWCF_OUTPUT_DIR = Path("data/processed-1m-flowcf")
-FLOWCF_SEED = 2020
-FLOWCF_EXPECTED_COUNTS = {
+SPLIT_SEED = 2020
+EXPECTED_COUNTS = {
     "users": 6_034,
     "movies": 3_125,
     "interactions": 574_376,
@@ -41,18 +40,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--raw-path", type=Path)
     parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--min-positive-rating", type=int, default=4)
-    parser.add_argument(
-        "--protocol",
-        choices=("chronological", "flowcf"),
-        default="chronological",
-        help="data split and filtering protocol",
-    )
     parser.add_argument(
         "--seed",
         type=int,
-        default=FLOWCF_SEED,
-        help="random seed for the FlowCF-compatible split",
+        default=SPLIT_SEED,
+        help="random seed for the per-user 80/10/10 split",
     )
     return parser.parse_args()
 
@@ -67,12 +59,7 @@ def filter_positive_interactions(
 def build_id_mapping(
     df: pd.DataFrame,
 ) -> tuple[pd.DataFrame, dict[int, int], dict[int, int]]:
-    """Map raw IDs to zero-based indices for embedding tables.
-
-    RecBole reserves index 0 for padding and starts real IDs at 1. This project
-    has no padding row, so it uses 0..N-1 for the same real users and movies.
-    The relabeling does not change split membership or ranking metrics.
-    """
+    """Map raw IDs to contiguous zero-based indices for embedding tables."""
     df = df.copy()
     user_ids = sorted(df["user_id"].unique())
     movie_ids = sorted(df["movie_id"].unique())
@@ -81,23 +68,6 @@ def build_id_mapping(
     df["user_idx"] = df["user_id"].map(user2idx)
     df["movie_idx"] = df["movie_id"].map(movie2idx)
     return df, user2idx, movie2idx
-
-
-def chronological_split(
-    df: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Keep each eligible user's last two positives for validation and test."""
-    ordered = df.sort_values(
-        ["user_idx", "timestamp", "movie_idx"], kind="stable"
-    )
-    eligible = ordered.groupby("user_idx")["user_idx"].transform("size") >= 3
-    ordered = ordered.loc[eligible]
-
-    position_from_end = ordered.groupby("user_idx").cumcount(ascending=False)
-    train = ordered.loc[position_from_end >= 2].reset_index(drop=True)
-    val = ordered.loc[position_from_end == 1].reset_index(drop=True)
-    test = ordered.loc[position_from_end == 0].reset_index(drop=True)
-    return train, val, test
 
 
 def filter_k_core(
@@ -125,7 +95,7 @@ def filter_k_core(
 
 
 def _ratio_split_counts(total: int) -> tuple[int, int, int]:
-    """Match RecBole's per-user 80/10/10 rounding behavior."""
+    """Return per-user counts for an 80/10/10 split."""
     ratios = (0.8, 0.1, 0.1)
     counts = [int(ratio * total) for ratio in ratios]
     counts[0] = total - counts[1] - counts[2]
@@ -139,10 +109,10 @@ def _ratio_split_counts(total: int) -> tuple[int, int, int]:
     return counts[0], counts[1], counts[2]
 
 
-def flowcf_split(
-    df: pd.DataFrame, seed: int = 2020
+def random_user_split(
+    df: pd.DataFrame, seed: int = SPLIT_SEED
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Reproduce RecBole's random, user-grouped 80/10/10 split."""
+    """Randomly split each user's interactions into 80/10/10 partitions."""
     generator = torch.Generator().manual_seed(seed)
     shuffled = df.iloc[torch.randperm(len(df), generator=generator).numpy()]
     partitions: list[list[pd.DataFrame]] = [[], [], []]
@@ -160,53 +130,53 @@ def flowcf_split(
     )
 
 
-def validate_flowcf_dataset(df: pd.DataFrame) -> None:
-    """Verify the official FlowCF MovieLens 1M filtering result."""
+def validate_dataset(df: pd.DataFrame) -> None:
+    """Verify the expected MovieLens 1M 5-core filtering result."""
     actual = {
         "users": int(df["user_id"].nunique()),
         "movies": int(df["movie_id"].nunique()),
         "interactions": len(df),
     }
-    if actual != FLOWCF_EXPECTED_COUNTS:
+    if actual != EXPECTED_COUNTS:
         raise ValueError(
-            "FlowCF reference counts do not match. Expected "
-            f"{FLOWCF_EXPECTED_COUNTS}, got {actual}. Check that ratings.dat "
+            "MovieLens 1M reference counts do not match. Expected "
+            f"{EXPECTED_COUNTS}, got {actual}. Check that ratings.dat "
             "is the complete official MovieLens 1M file."
         )
     if (df.groupby("user_id").size() < 5).any():
-        raise ValueError("FlowCF 5-core check failed for at least one user")
+        raise ValueError("5-core check failed for at least one user")
     if (df.groupby("movie_id").size() < 5).any():
-        raise ValueError("FlowCF 5-core check failed for at least one movie")
+        raise ValueError("5-core check failed for at least one movie")
 
 
-def validate_flowcf_split(
+def validate_random_split(
     source: pd.DataFrame,
     train: pd.DataFrame,
     val: pd.DataFrame,
     test: pd.DataFrame,
 ) -> None:
-    """Verify RecBole-style user-grouped split membership and sizes."""
+    """Verify per-user split membership and 80/10/10 sizes."""
     parts = (train, val, test)
     if any(part.empty for part in parts):
-        raise ValueError("FlowCF split contains an empty partition")
+        raise ValueError("Split contains an empty partition")
 
     source_users = set(source["user_idx"].astype(int))
     if any(set(part["user_idx"].astype(int)) != source_users for part in parts):
-        raise ValueError("Every FlowCF user must occur in train, validation, and test")
+        raise ValueError("Every user must occur in train, validation, and test")
 
     key_columns = ["user_id", "movie_id"]
     source_keys = set(map(tuple, source[key_columns].to_numpy()))
     part_keys = [set(map(tuple, part[key_columns].to_numpy())) for part in parts]
     if len(source_keys) != len(source):
-        raise ValueError("Official MovieLens 1M should have unique user-movie pairs")
+        raise ValueError("MovieLens 1M should have unique user-movie pairs")
     if (
         part_keys[0] & part_keys[1]
         or part_keys[0] & part_keys[2]
         or part_keys[1] & part_keys[2]
     ):
-        raise ValueError("FlowCF split partitions overlap")
+        raise ValueError("Split partitions overlap")
     if set.union(*part_keys) != source_keys:
-        raise ValueError("FlowCF split does not preserve every filtered interaction")
+        raise ValueError("Split does not preserve every filtered interaction")
 
     source_counts = source.groupby("user_idx").size()
     actual_counts = [part.groupby("user_idx").size() for part in parts]
@@ -215,30 +185,9 @@ def validate_flowcf_split(
         actual = tuple(int(counts.loc[user_id]) for counts in actual_counts)
         if actual != expected:
             raise ValueError(
-                f"FlowCF split count mismatch for user {user_id}: "
+                f"Split count mismatch for user {user_id}: "
                 f"expected {expected}, got {actual}"
             )
-
-
-def validate_split(
-    train: pd.DataFrame, val: pd.DataFrame, test: pd.DataFrame
-) -> None:
-    assert not train.empty and not val.empty and not test.empty
-    assert val["user_idx"].is_unique
-    assert test["user_idx"].is_unique
-    assert set(val["user_idx"]) == set(test["user_idx"])
-    assert set(val["user_idx"]).issubset(set(train["user_idx"]))
-
-    boundaries = (
-        train.groupby("user_idx")["timestamp"].max().rename("train_max")
-        .to_frame()
-        .join(val.set_index("user_idx")["timestamp"].rename("val_ts"))
-        .join(test.set_index("user_idx")["timestamp"].rename("test_ts"))
-    )
-    # MovieLens timestamps have one-second precision, so simultaneous ratings
-    # can tie. Stable ordering prevents leakage while allowing equal timestamps.
-    assert (boundaries["train_max"] <= boundaries["val_ts"]).all()
-    assert (boundaries["val_ts"] <= boundaries["test_ts"]).all()
 
 
 def save_processed_data(
@@ -267,32 +216,20 @@ def save_processed_data(
 
 def main() -> None:
     args = parse_args()
-    if args.protocol == "flowcf" and args.min_positive_rating != 4:
-        raise ValueError("FlowCF compatibility requires --min-positive-rating 4")
-    if args.protocol == "flowcf" and args.seed != FLOWCF_SEED:
-        raise ValueError(f"FlowCF compatibility requires --seed {FLOWCF_SEED}")
     raw_path = args.raw_path or RAW_PATH
-    default_output = FLOWCF_OUTPUT_DIR if args.protocol == "flowcf" else OUTPUT_DIR
-    output_dir = args.output_dir or default_output
+    output_dir = args.output_dir or OUTPUT_DIR
     if not raw_path.exists():
         raise FileNotFoundError(
             f"Missing {raw_path}. Download and extract MovieLens 1M so that "
             "ratings.dat is available at this path."
         )
     ratings = load_data(raw_path)
-    interactions = filter_positive_interactions(
-        ratings, args.min_positive_rating
-    )
-    if args.protocol == "flowcf":
-        interactions = filter_k_core(interactions, min_interactions=5)
-        validate_flowcf_dataset(interactions)
+    interactions = filter_positive_interactions(ratings, min_rating=4)
+    interactions = filter_k_core(interactions, min_interactions=5)
+    validate_dataset(interactions)
     interactions, user2idx, movie2idx = build_id_mapping(interactions)
-    if args.protocol == "flowcf":
-        train, val, test = flowcf_split(interactions, seed=args.seed)
-        validate_flowcf_split(interactions, train, val, test)
-    else:
-        train, val, test = chronological_split(interactions)
-        validate_split(train, val, test)
+    train, val, test = random_user_split(interactions, seed=args.seed)
+    validate_random_split(interactions, train, val, test)
     save_processed_data(
         train,
         val,
@@ -302,30 +239,18 @@ def main() -> None:
         output_dir,
         metadata={
             "dataset": "MovieLens 1M",
-            "protocol": args.protocol,
-            "min_positive_rating": args.min_positive_rating,
-            "min_interactions": 5 if args.protocol == "flowcf" else 3,
-            "seed": args.seed if args.protocol == "flowcf" else None,
-            "split": (
-                "random_user_80_10_10"
-                if args.protocol == "flowcf"
-                else "chronological_leave_two_out"
-            ),
-            "reference": (
-                "https://github.com/chengkai-liu/FlowCF"
-                if args.protocol == "flowcf"
-                else None
-            ),
+            "protocol": "random_user_80_10_10",
+            "min_positive_rating": 4,
+            "min_interactions": 5,
+            "seed": args.seed,
+            "split": "random_user_80_10_10",
             "real_item_count": len(movie2idx),
-            "recbole_item_count_including_padding": (
-                len(movie2idx) + 1 if args.protocol == "flowcf" else None
-            ),
         },
     )
 
     print(
         f"Preprocessing complete | dataset: MovieLens 1M "
-        f"| protocol: {args.protocol}"
+        "| split: random user-level 80/10/10"
     )
     print(f"users: {len(user2idx):,} | movies: {len(movie2idx):,}")
     print(f"train: {len(train):,} | val: {len(val):,} | test: {len(test):,}")

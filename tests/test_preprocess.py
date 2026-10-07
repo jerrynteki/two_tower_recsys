@@ -6,9 +6,9 @@ import pandas as pd
 
 from preprocess import (
     filter_k_core,
-    flowcf_split,
+    random_user_split,
     load_data,
-    validate_flowcf_split,
+    validate_random_split,
 )
 
 
@@ -48,7 +48,7 @@ class PreprocessTests(unittest.TestCase):
         self.assertTrue((result.groupby("user_id").size() >= 2).all())
         self.assertTrue((result.groupby("movie_id").size() >= 2).all())
 
-    def test_flowcf_split_matches_recbole_rounding_and_is_reproducible(self) -> None:
+    def test_random_split_matches_per_user_rounding_and_is_reproducible(self) -> None:
         interactions = pd.DataFrame(
             {
                 "user_idx": [0] * 10 + [1] * 5,
@@ -56,8 +56,8 @@ class PreprocessTests(unittest.TestCase):
             }
         )
 
-        first = flowcf_split(interactions, seed=2020)
-        second = flowcf_split(interactions, seed=2020)
+        first = random_user_split(interactions, seed=2020)
+        second = random_user_split(interactions, seed=2020)
 
         self.assertEqual([len(part) for part in first], [11, 2, 2])
         for first_part, second_part in zip(first, second):
@@ -70,7 +70,7 @@ class PreprocessTests(unittest.TestCase):
         self.assertFalse(split_pairs[1] & split_pairs[2])
         self.assertEqual(len(set.union(*split_pairs)), len(interactions))
 
-    def test_flowcf_split_validation_checks_membership_and_user_sizes(self) -> None:
+    def test_random_split_validation_checks_membership_and_user_sizes(self) -> None:
         interactions = pd.DataFrame(
             {
                 "user_id": [1] * 10 + [2] * 5,
@@ -80,9 +80,9 @@ class PreprocessTests(unittest.TestCase):
             }
         )
 
-        train, val, test = flowcf_split(interactions, seed=2020)
+        train, val, test = random_user_split(interactions, seed=2020)
 
-        validate_flowcf_split(interactions, train, val, test)
+        validate_random_split(interactions, train, val, test)
 
 if __name__ == "__main__":
     unittest.main()

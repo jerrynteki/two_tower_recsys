@@ -5,7 +5,7 @@ artifacts/
 runs/
 data/raw/ml-1m/
 data/processed-1m/
-data/processed-1m-flowcf/
+data/processed-1m-legacy/
 __pycache__/
 *.py[cod]
 .DS_Store
