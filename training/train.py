@@ -18,7 +18,9 @@ from torch.utils.tensorboard import SummaryWriter
 
 from datasets import InteractionDataset
 from evaluation.evaluate import build_seen_items, evaluate_retrieval_metrics
+from features.movie_feature_matrix import load_movie_feature_matrix
 from models import TwoTower
+from models.feature_two_tower import HybridFeatureTwoTower
 from training.checkpointing import (
     capture_random_state,
     restore_random_state,
@@ -125,9 +127,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--similarity", choices=("dot", "cosine"), default="dot")
     parser.add_argument(
         "--architecture",
-        choices=("mlp", "embedding", "residual_mlp"),
+        choices=("mlp", "embedding", "residual_mlp", "feature_hybrid"),
         default="mlp",
-        help="tower structure: current MLP, direct ID embeddings, or residual MLP",
+        help=(
+            "tower structure: MLP, direct ID embeddings, residual MLP, or "
+            "ID embeddings combined with movie metadata"
+        ),
     )
     parser.add_argument(
         "--no-normalize",
@@ -221,15 +226,26 @@ def main() -> None:
     ):
         raise ValueError("checkpoint catalog sizes do not match the processed data")
     sampler = UniformNegativeSampler(num_items, seen_items, seed=args.seed)
-    model = TwoTower(
-        num_users,
-        num_items,
-        embedding_dim=args.embedding_dim,
-        temperature=args.temperature,
-        normalize_embeddings=args.normalize_embeddings,
-        similarity=args.similarity,
-        architecture=args.architecture,
-    ).to(device)
+    if args.architecture == "feature_hybrid":
+        movie_features = load_movie_feature_matrix(args.processed_dir, num_items)
+        model = HybridFeatureTwoTower(
+            num_users,
+            movie_features,
+            embedding_dim=args.embedding_dim,
+            temperature=args.temperature,
+            normalize_embeddings=args.normalize_embeddings,
+            similarity=args.similarity,
+        ).to(device)
+    else:
+        model = TwoTower(
+            num_users,
+            num_items,
+            embedding_dim=args.embedding_dim,
+            temperature=args.temperature,
+            normalize_embeddings=args.normalize_embeddings,
+            similarity=args.similarity,
+            architecture=args.architecture,
+        ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
     run_dir = timestamped_run_dir(args.log_dir, args.run_name)
     writer = None if args.no_tensorboard else SummaryWriter(log_dir=run_dir)

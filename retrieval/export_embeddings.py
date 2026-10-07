@@ -21,7 +21,7 @@ def main() -> None:
     model = load_model(args.checkpoint, device)
     with torch.no_grad():
         if args.user_idx is None:
-            ids = torch.arange(model.item_tower.embedding.num_embeddings, device=device)
+            ids = torch.arange(model.num_items, device=device)
             vectors = model.item_tower(ids)
         else:
             vectors = model.user_tower(torch.tensor([args.user_idx], device=device))

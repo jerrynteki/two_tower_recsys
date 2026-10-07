@@ -81,6 +81,10 @@ class TwoTower(nn.Module):
         self.similarity = similarity
         self.architecture = architecture
 
+    @property
+    def num_items(self) -> int:
+        return self.item_tower.embedding.num_embeddings
+
     def forward(
         self, user_ids: torch.Tensor, item_ids: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:

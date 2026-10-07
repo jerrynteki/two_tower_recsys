@@ -12,6 +12,7 @@ import pandas as pd
 import torch
 
 from evaluation.evaluate import load_model
+from features.prepare_movie_features import GENRES
 from training import train
 from training.checkpointing import capture_random_state, restore_random_state, save_checkpoint
 
@@ -116,6 +117,42 @@ class CheckpointTests(unittest.TestCase):
                         "--no-early-stopping",
                     ])
                     self.assertEqual(torch.load(latest, weights_only=True)["epoch"], 7)
+
+    def test_feature_hybrid_training_checkpoint_can_be_loaded_for_retrieval(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pd.DataFrame(
+                {"user_idx": [0, 1, 0, 1], "movie_idx": [0, 1, 2, 3]}
+            ).to_csv(root / "train.csv", index=False)
+            pd.DataFrame(
+                {"user_idx": [0, 1], "movie_idx": [3, 2]}
+            ).to_csv(root / "val.csv", index=False)
+            for filename, count in (("user2idx.json", 2), ("movie2idx.json", 7)):
+                (root / filename).write_text(
+                    json.dumps({str(i): i for i in range(count)})
+                )
+            feature_data = {
+                "movie_idx": list(range(7)),
+                "release_year_scaled": [0.8] * 7,
+            }
+            feature_data.update({genre: [int(i % 2 == j % 2) for i in range(7)]
+                                 for j, genre in enumerate(GENRES)})
+            pd.DataFrame(feature_data).to_csv(root / "movie_features.csv", index=False)
+
+            output = root / "hybrid.pt"
+            self.run_training([
+                "--processed-dir", str(root), "--output", str(output),
+                "--architecture", "feature_hybrid", "--epochs", "2",
+                "--batch-size", "2", "--embedding-dim", "4",
+                "--negative-count", "2", "--seed", "7", "--ks", "1",
+                "--selection-metric", "NDCG@1", "--patience", "2",
+            ])
+
+            loaded = load_model(output, torch.device("cpu"))
+            self.assertEqual(loaded.architecture, "feature_hybrid")
+            self.assertEqual(loaded.num_items, 7)
+            item_vectors = loaded.item_tower(torch.arange(7))
+            self.assertEqual(tuple(item_vectors.shape), (7, 4))
 
     def test_random_states_round_trip_through_safe_loader(self):
         loader = torch.Generator().manual_seed(17)
