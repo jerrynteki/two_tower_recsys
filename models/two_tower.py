@@ -13,18 +13,29 @@ class EmbeddingTower(nn.Module):
         num_entities: int,
         embedding_dim: int = 64,
         normalize_embeddings: bool = True,
+        architecture: str = "mlp",
     ) -> None:
         super().__init__()
+        if architecture not in {"mlp", "embedding", "residual_mlp"}:
+            raise ValueError(
+                "architecture must be 'mlp', 'embedding', or 'residual_mlp'"
+            )
         self.normalize_embeddings = normalize_embeddings
+        self.architecture = architecture
         self.embedding = nn.Embedding(num_entities, embedding_dim)
-        self.mlp = nn.Sequential(
-            nn.Linear(embedding_dim, embedding_dim * 2),
-            nn.ReLU(),
-            nn.Linear(embedding_dim * 2, embedding_dim),
-        )
+        if architecture != "embedding":
+            self.mlp = nn.Sequential(
+                nn.Linear(embedding_dim, embedding_dim * 2),
+                nn.ReLU(),
+                nn.Linear(embedding_dim * 2, embedding_dim),
+            )
 
     def forward(self, entity_ids: torch.Tensor) -> torch.Tensor:
-        vectors = self.mlp(self.embedding(entity_ids))
+        vectors = self.embedding(entity_ids)
+        if self.architecture == "mlp":
+            vectors = self.mlp(vectors)
+        elif self.architecture == "residual_mlp":
+            vectors = vectors + self.mlp(vectors)
         if self.normalize_embeddings:
             return F.normalize(vectors, p=2, dim=-1)
         return vectors
@@ -49,20 +60,26 @@ class TwoTower(nn.Module):
         temperature: float = 0.07,
         normalize_embeddings: bool = True,
         similarity: str = "dot",
+        architecture: str = "mlp",
     ) -> None:
         super().__init__()
         if temperature <= 0:
             raise ValueError("temperature must be positive")
         if similarity not in {"dot", "cosine"}:
             raise ValueError("similarity must be 'dot' or 'cosine'")
+        if architecture not in {"mlp", "embedding", "residual_mlp"}:
+            raise ValueError(
+                "architecture must be 'mlp', 'embedding', or 'residual_mlp'"
+            )
         self.user_tower = UserTower(
-            num_users, embedding_dim, normalize_embeddings
+            num_users, embedding_dim, normalize_embeddings, architecture
         )
         self.item_tower = ItemTower(
-            num_items, embedding_dim, normalize_embeddings
+            num_items, embedding_dim, normalize_embeddings, architecture
         )
         self.temperature = temperature
         self.similarity = similarity
+        self.architecture = architecture
 
     def forward(
         self, user_ids: torch.Tensor, item_ids: torch.Tensor

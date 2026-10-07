@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -30,6 +29,7 @@ def load_model(checkpoint_path: Path, device: torch.device) -> TwoTower:
         temperature=checkpoint["temperature"],
         normalize_embeddings=checkpoint.get("normalize_embeddings", True),
         similarity=checkpoint.get("similarity", "dot"),
+        architecture=checkpoint.get("architecture", "mlp"),
     ).to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
@@ -42,15 +42,6 @@ def build_seen_items(train: pd.DataFrame) -> dict[int, set[int]]:
         int(user_id): set(group["movie_idx"].astype(int))
         for user_id, group in train.groupby("user_idx")
     }
-
-
-def load_protocol(processed_dir: Path) -> str:
-    """Read the preprocessing protocol, defaulting for older artifacts."""
-    metadata_path = processed_dir / "metadata.json"
-    if not metadata_path.exists():
-        return "chronological"
-    with metadata_path.open(encoding="utf-8") as handle:
-        return str(json.load(handle).get("protocol", "chronological"))
 
 
 def mask_seen_items(
@@ -136,28 +127,6 @@ def retrieve_baseline_topk_for_users(
 
 
 @torch.no_grad()
-def retrieve_topk(
-    model: TwoTower,
-    interactions: pd.DataFrame,
-    seen_items: dict[int, set[int]],
-    max_k: int,
-    batch_size: int,
-    device: torch.device,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Retrieve full-catalog Top-K items for every evaluation user."""
-    user_ids = torch.as_tensor(
-        interactions["user_idx"].to_numpy(), dtype=torch.long
-    )
-    retrieved = retrieve_topk_for_users(
-        model, user_ids, seen_items, max_k, batch_size, device
-    )
-    targets = torch.as_tensor(
-        interactions["movie_idx"].to_numpy(), dtype=torch.long
-    )
-    return retrieved, targets
-
-
-@torch.no_grad()
 def retrieve_topk_for_users(
     model: TwoTower,
     user_ids: torch.Tensor,
@@ -225,7 +194,7 @@ def multi_target_metrics(
     relevant_items: dict[int, set[int]],
     ks: Iterable[int],
 ) -> dict[str, float]:
-    """Calculate RecBole-style Recall and NDCG for multiple targets per user."""
+    """Calculate per-user Recall and NDCG for multiple targets."""
     if topk_items.ndim != 2:
         raise ValueError("topk_items must have shape [num_users, max_k]")
     if user_ids.ndim != 1 or len(user_ids) != len(topk_items):
@@ -266,19 +235,8 @@ def evaluate_retrieval_metrics(
     batch_size: int,
     device: torch.device,
 ) -> dict[str, float]:
-    """Evaluate either a one-target or multi-target interaction split."""
+    """Evaluate multi-positive full-catalog retrieval for each user."""
     ks = list(ks)
-    if interactions["user_idx"].is_unique:
-        topk_items, targets = retrieve_topk(
-            model,
-            interactions,
-            seen_items,
-            max(ks),
-            batch_size,
-            device,
-        )
-        return single_target_metrics(topk_items, targets, ks)
-
     relevant_items = build_seen_items(interactions)
     user_ids = torch.tensor(sorted(relevant_items), dtype=torch.long)
     topk_items = retrieve_topk_for_users(
@@ -302,21 +260,8 @@ def evaluate_baseline_metrics(
     strategy: str,
     seed: int = 42,
 ) -> dict[str, float]:
-    """Evaluate a random or popularity baseline on either split type."""
+    """Evaluate a random or popularity ranking with multi-positive metrics."""
     ks = list(ks)
-    if interactions["user_idx"].is_unique:
-        topk_items, targets = retrieve_baseline_topk(
-            train,
-            interactions,
-            seen_items,
-            num_items,
-            max(ks),
-            batch_size,
-            strategy,
-            seed,
-        )
-        return single_target_metrics(topk_items, targets, ks)
-
     relevant_items = build_seen_items(interactions)
     user_ids = torch.tensor(sorted(relevant_items), dtype=torch.long)
     topk_items = retrieve_baseline_topk_for_users(
@@ -341,7 +286,7 @@ def parse_args() -> argparse.Namespace:
         "--processed-dir", type=Path, default=Path("data/processed-1m")
     )
     parser.add_argument("--split", choices=("val", "test"), default="val")
-    parser.add_argument("--ks", type=int, nargs="+", default=[10, 50, 100])
+    parser.add_argument("--ks", type=int, nargs="+", default=[10, 20])
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--no-baselines", action="store_true")
@@ -354,13 +299,12 @@ def main() -> None:
     model = load_model(args.checkpoint, device)
     train = pd.read_csv(args.processed_dir / "train.csv")
     evaluation_data = pd.read_csv(args.processed_dir / f"{args.split}.csv")
-    protocol = load_protocol(args.processed_dir)
     max_k = max(args.ks)
     if max_k > model.item_tower.embedding.num_embeddings:
         raise ValueError("requested K is larger than the movie catalog")
 
     history = train
-    if protocol == "flowcf" and args.split == "test":
+    if args.split == "test":
         validation = pd.read_csv(args.processed_dir / "val.csv")
         history = pd.concat((train, validation), ignore_index=True)
     seen_items = build_seen_items(history)
@@ -388,7 +332,7 @@ def main() -> None:
             )
 
     print(
-        f"device: {device} | protocol: {protocol} | split: {args.split} "
+        f"device: {device} | split: {args.split} "
         f"| users: {evaluation_data['user_idx'].nunique():,} "
         f"| catalog: {model.item_tower.embedding.num_embeddings:,}"
     )

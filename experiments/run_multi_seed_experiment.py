@@ -44,7 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=0.07)
     parser.add_argument("--negative-count", type=int, default=64)
     parser.add_argument("--selection-metric", default="NDCG@10")
-    parser.add_argument("--ks", type=int, nargs="+", default=[10, 50, 100])
+    parser.add_argument("--ks", type=int, nargs="+", default=[10, 20])
     parser.add_argument("--no-tensorboard", action="store_true")
     return parser.parse_args()
 

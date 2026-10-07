@@ -70,10 +70,14 @@ def main() -> None:
         "--input", type=Path, default=Path("data/raw/ml-1m/movies.dat")
     )
     parser.add_argument(
-        "--mapping", type=Path, default=Path("data/processed-1m/movie2idx.json")
+        "--mapping",
+        type=Path,
+        default=Path("data/processed-1m/movie2idx.json"),
     )
     parser.add_argument(
-        "--output", type=Path, default=Path("data/processed-1m/movie_features.csv")
+        "--output",
+        type=Path,
+        default=Path("data/processed-1m/movie_features.csv"),
     )
     args = parser.parse_args()
     result = prepare(args.input, args.mapping, args.output)
