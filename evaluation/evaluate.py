@@ -10,6 +10,7 @@ import pandas as pd
 import torch
 
 from models import TwoTower
+from models.feature_two_tower import HybridFeatureTwoTower
 
 
 def select_device() -> torch.device:
@@ -20,17 +21,29 @@ def select_device() -> torch.device:
     return torch.device("cpu")
 
 
-def load_model(checkpoint_path: Path, device: torch.device) -> TwoTower:
+def load_model(checkpoint_path: Path, device: torch.device) -> torch.nn.Module:
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
-    model = TwoTower(
-        checkpoint["num_users"],
-        checkpoint["num_items"],
-        embedding_dim=checkpoint["embedding_dim"],
-        temperature=checkpoint["temperature"],
-        normalize_embeddings=checkpoint.get("normalize_embeddings", True),
-        similarity=checkpoint.get("similarity", "dot"),
-        architecture=checkpoint.get("architecture", "mlp"),
-    ).to(device)
+    architecture = checkpoint.get("architecture", "mlp")
+    common = {
+        "embedding_dim": checkpoint["embedding_dim"],
+        "temperature": checkpoint["temperature"],
+        "normalize_embeddings": checkpoint.get("normalize_embeddings", True),
+        "similarity": checkpoint.get("similarity", "dot"),
+    }
+    if architecture == "feature_hybrid":
+        state_dict = checkpoint["model_state_dict"]
+        model = HybridFeatureTwoTower(
+            checkpoint["num_users"],
+            state_dict["item_tower.feature_matrix"],
+            **common,
+        ).to(device)
+    else:
+        model = TwoTower(
+            checkpoint["num_users"],
+            checkpoint["num_items"],
+            architecture=architecture,
+            **common,
+        ).to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
     return model
@@ -136,9 +149,7 @@ def retrieve_topk_for_users(
     device: torch.device,
 ) -> torch.Tensor:
     """Retrieve one full-catalog Top-K list for each supplied user."""
-    all_item_ids = torch.arange(
-        model.item_tower.embedding.num_embeddings, device=device
-    )
+    all_item_ids = torch.arange(model.num_items, device=device)
     item_embeddings = model.item_tower(all_item_ids)
     retrieved_batches: list[torch.Tensor] = []
 
@@ -300,7 +311,7 @@ def main() -> None:
     train = pd.read_csv(args.processed_dir / "train.csv")
     evaluation_data = pd.read_csv(args.processed_dir / f"{args.split}.csv")
     max_k = max(args.ks)
-    if max_k > model.item_tower.embedding.num_embeddings:
+    if max_k > model.num_items:
         raise ValueError("requested K is larger than the movie catalog")
 
     history = train
@@ -324,7 +335,7 @@ def main() -> None:
                 train,
                 evaluation_data,
                 seen_items,
-                model.item_tower.embedding.num_embeddings,
+                model.num_items,
                 args.ks,
                 args.batch_size,
                 strategy,
@@ -334,7 +345,7 @@ def main() -> None:
     print(
         f"device: {device} | split: {args.split} "
         f"| users: {evaluation_data['user_idx'].nunique():,} "
-        f"| catalog: {model.item_tower.embedding.num_embeddings:,}"
+        f"| catalog: {model.num_items:,}"
     )
     for method, metrics in results.items():
         print(f"\n{method}")

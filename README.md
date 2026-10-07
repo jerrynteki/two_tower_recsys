@@ -34,6 +34,16 @@ Each tower maps its user or movie ID to a normalized embedding. Training scores
 the positive movie against 64 sampled unseen movies and uses cross-entropy to
 rank the positive first.
 
+The trainer supports `mlp`, `embedding`, and `residual_mlp` ID-only models, plus
+`feature_hybrid`, which adds a projected movie ID embedding to a projected movie
+metadata embedding. For the hybrid model, prepare genre and release-year
+features first:
+
+```bash
+python -m features.prepare_movie_features
+python -m training.train --architecture feature_hybrid
+```
+
 ## Setup
 
 ```bash
@@ -112,6 +122,9 @@ Repeat a selected configuration across seeds:
 ```bash
 python -m experiments.run_multi_seed_experiment --seeds 42 43 44
 ```
+
+The same runner accepts `--architecture feature_hybrid` after movie features
+have been prepared.
 
 Compare two-tower configurations:
 

@@ -40,6 +40,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--patience", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--embedding-dim", type=int, default=128)
+    parser.add_argument(
+        "--architecture",
+        choices=("mlp", "embedding", "residual_mlp", "feature_hybrid"),
+        default="mlp",
+    )
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--temperature", type=float, default=0.07)
     parser.add_argument("--negative-count", type=int, default=64)
@@ -85,6 +90,8 @@ def train_command(args: argparse.Namespace, seed: int, checkpoint: Path) -> list
         str(args.batch_size),
         "--embedding-dim",
         str(args.embedding_dim),
+        "--architecture",
+        args.architecture,
         "--learning-rate",
         str(args.learning_rate),
         "--temperature",
@@ -98,7 +105,7 @@ def train_command(args: argparse.Namespace, seed: int, checkpoint: Path) -> list
         "--seed",
         str(seed),
         "--run-name",
-        f"uniform_dim{args.embedding_dim}_seed{seed}",
+        f"{args.architecture}_dim{args.embedding_dim}_seed{seed}",
     ]
     if args.no_tensorboard:
         command.append("--no-tensorboard")
@@ -123,6 +130,7 @@ def main() -> None:
             "seed": seed,
             "best_epoch": saved["best_epoch"],
             "embedding_dim": args.embedding_dim,
+            "architecture": args.architecture,
             "learning_rate": args.learning_rate,
             "temperature": args.temperature,
             "negative_strategy": "uniform",
