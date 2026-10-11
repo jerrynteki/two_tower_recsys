@@ -49,6 +49,7 @@ RESUME_SETTINGS = (
     "similarity",
     "normalize_embeddings",
     "architecture",
+    "user_architecture",
     "seed",
     "ks",
     "eval_every",
@@ -126,13 +127,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--negative-count", type=int, default=64)
     parser.add_argument("--similarity", choices=("dot", "cosine"), default="dot")
     parser.add_argument(
+        "--item-tower",
         "--architecture",
-        choices=("mlp", "embedding", "residual_mlp", "feature_hybrid"),
+        dest="architecture",
+        choices=(
+            "mlp",
+            "embedding",
+            "residual_mlp",
+            "feature_hybrid",
+            "gated_feature_hybrid",
+        ),
         default="mlp",
         help=(
-            "tower structure: MLP, direct ID embeddings, residual MLP, or "
-            "ID embeddings combined with movie metadata"
+            "item tower: MLP, direct ID embeddings, residual MLP, or "
+            "ID embeddings combined with movie metadata, optionally with a learned "
+            "feature gate (legacy alias: --architecture)"
         ),
+    )
+    parser.add_argument(
+        "--user-tower",
+        "--user-architecture",
+        dest="user_architecture",
+        choices=("mlp", "embedding", "residual_mlp"),
+        default="mlp",
+        help="user tower structure for feature_hybrid (legacy alias: --user-architecture)",
     )
     parser.add_argument(
         "--no-normalize",
@@ -177,6 +195,8 @@ def main() -> None:
             value = checkpoint["training_config"].get(name)
             if name == "architecture" and value is None:
                 value = "mlp"
+            if name == "user_architecture" and value is None:
+                value = "mlp"
             if value is None:
                 raise ValueError(f"resume checkpoint is missing training setting {name!r}")
             setattr(args, name, value)
@@ -203,6 +223,8 @@ def main() -> None:
         raise ValueError("negative-count must be positive")
     if args.patience <= 0:
         raise ValueError("patience must be positive")
+    if args.architecture not in {"feature_hybrid", "gated_feature_hybrid"} and args.user_architecture != "mlp":
+        raise ValueError("--user-tower can only be set for a feature-hybrid item tower")
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -226,7 +248,7 @@ def main() -> None:
     ):
         raise ValueError("checkpoint catalog sizes do not match the processed data")
     sampler = UniformNegativeSampler(num_items, seen_items, seed=args.seed)
-    if args.architecture == "feature_hybrid":
+    if args.architecture in {"feature_hybrid", "gated_feature_hybrid"}:
         movie_features = load_movie_feature_matrix(args.processed_dir, num_items)
         model = HybridFeatureTwoTower(
             num_users,
@@ -235,6 +257,8 @@ def main() -> None:
             temperature=args.temperature,
             normalize_embeddings=args.normalize_embeddings,
             similarity=args.similarity,
+            user_architecture=args.user_architecture,
+            item_architecture=args.architecture,
         ).to(device)
     else:
         model = TwoTower(
@@ -262,6 +286,9 @@ def main() -> None:
         "seed": args.seed,
         "similarity": args.similarity,
         "architecture": args.architecture,
+        "item_tower": args.architecture,
+        "user_architecture": args.user_architecture,
+        "user_tower": args.user_architecture,
         "temperature": args.temperature,
         "selection_metric": args.selection_metric,
         "patience": args.patience,
@@ -323,6 +350,12 @@ def main() -> None:
                 len(dataset) / train_elapsed,
                 epoch,
             )
+            if hasattr(model.item_tower, "feature_gate"):
+                writer.add_scalar(
+                    "model/feature_gate",
+                    model.item_tower.feature_gate.detach().item(),
+                    epoch,
+                )
             log_model_statistics(writer, model, epoch)
 
         should_evaluate = epoch % args.eval_every == 0 or epoch == args.epochs
@@ -419,6 +452,11 @@ def main() -> None:
     model.load_state_dict(best_state_dict)
     final_metrics = best_metrics
 
+    learned_feature_gate = (
+        float(model.item_tower.feature_gate.detach().item())
+        if hasattr(model.item_tower, "feature_gate")
+        else None
+    )
     save_checkpoint(
         {
             "model_state_dict": model.state_dict(),
@@ -429,6 +467,10 @@ def main() -> None:
             "normalize_embeddings": args.normalize_embeddings,
             "similarity": args.similarity,
             "architecture": args.architecture,
+            "item_tower": args.architecture,
+            "user_architecture": args.user_architecture,
+            "user_tower": args.user_architecture,
+            "feature_gate": learned_feature_gate,
             "negative_strategy": "uniform",
             "negative_count": args.negative_count,
             "best_epoch": best_epoch,

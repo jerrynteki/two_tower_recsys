@@ -23,18 +23,24 @@ def select_device() -> torch.device:
 
 def load_model(checkpoint_path: Path, device: torch.device) -> torch.nn.Module:
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
-    architecture = checkpoint.get("architecture", "mlp")
+    architecture = checkpoint.get(
+        "item_tower", checkpoint.get("architecture", "mlp")
+    )
     common = {
         "embedding_dim": checkpoint["embedding_dim"],
         "temperature": checkpoint["temperature"],
         "normalize_embeddings": checkpoint.get("normalize_embeddings", True),
         "similarity": checkpoint.get("similarity", "dot"),
     }
-    if architecture == "feature_hybrid":
+    if architecture in {"feature_hybrid", "gated_feature_hybrid"}:
         state_dict = checkpoint["model_state_dict"]
         model = HybridFeatureTwoTower(
             checkpoint["num_users"],
             state_dict["item_tower.feature_matrix"],
+            user_architecture=checkpoint.get(
+                "user_tower", checkpoint.get("user_architecture", "mlp")
+            ),
+            item_architecture=architecture,
             **common,
         ).to(device)
     else:

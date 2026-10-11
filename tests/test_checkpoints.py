@@ -142,15 +142,21 @@ class CheckpointTests(unittest.TestCase):
             output = root / "hybrid.pt"
             self.run_training([
                 "--processed-dir", str(root), "--output", str(output),
-                "--architecture", "feature_hybrid", "--epochs", "2",
+                "--item-tower", "gated_feature_hybrid", "--epochs", "2",
+                "--user-tower", "embedding",
                 "--batch-size", "2", "--embedding-dim", "4",
                 "--negative-count", "2", "--seed", "7", "--ks", "1",
                 "--selection-metric", "NDCG@1", "--patience", "2",
             ])
 
             loaded = load_model(output, torch.device("cpu"))
-            self.assertEqual(loaded.architecture, "feature_hybrid")
+            self.assertEqual(loaded.architecture, "gated_feature_hybrid")
+            self.assertEqual(loaded.user_architecture, "embedding")
+            self.assertEqual(loaded.user_tower.architecture, "embedding")
             self.assertEqual(loaded.num_items, 7)
+            learned_gate = float(loaded.item_tower.feature_gate.detach())
+            self.assertGreater(learned_gate, 0.0)
+            self.assertLess(learned_gate, 1.0)
             item_vectors = loaded.item_tower(torch.arange(7))
             self.assertEqual(tuple(item_vectors.shape), (7, 4))
 

@@ -58,6 +58,37 @@ class HybridItemTower(nn.Module):
         return id_vectors + content_vectors
 
 
+class GatedHybridItemTower(HybridItemTower):
+    """Learn the global blend between movie-ID and metadata embeddings."""
+
+    def __init__(
+        self,
+        feature_matrix: torch.Tensor,
+        embedding_dim: int = 64,
+        normalize_embeddings: bool = True,
+    ) -> None:
+        super().__init__(feature_matrix, embedding_dim, normalize_embeddings)
+        # A zero logit starts at an even blend, matching the ungated sum's
+        # direction after normalization.
+        self.feature_gate_logit = nn.Parameter(torch.zeros(()))
+
+    @property
+    def feature_gate(self) -> torch.Tensor:
+        return torch.sigmoid(self.feature_gate_logit)
+
+    def forward(self, item_ids: torch.Tensor) -> torch.Tensor:
+        id_vectors = self.id_embedding(item_ids)
+        content_vectors = self.content_mlp(self.feature_matrix[item_ids])
+        if self.normalize_embeddings:
+            id_vectors = F.normalize(id_vectors, p=2, dim=-1)
+            content_vectors = F.normalize(content_vectors, p=2, dim=-1)
+        gate = self.feature_gate
+        vectors = (1.0 - gate) * id_vectors + gate * content_vectors
+        if self.normalize_embeddings:
+            return F.normalize(vectors, p=2, dim=-1)
+        return vectors
+
+
 class FeatureTwoTower(nn.Module):
     def __init__(self, num_users: int, feature_matrix: torch.Tensor, embedding_dim: int = 64, temperature: float = 0.07) -> None:
         super().__init__()
@@ -89,22 +120,38 @@ class HybridFeatureTwoTower(nn.Module):
         temperature: float = 0.07,
         normalize_embeddings: bool = True,
         similarity: str = "dot",
+        user_architecture: str = "mlp",
+        item_architecture: str = "feature_hybrid",
     ) -> None:
         super().__init__()
         if temperature <= 0:
             raise ValueError("temperature must be positive")
         if similarity not in {"dot", "cosine"}:
             raise ValueError("similarity must be 'dot' or 'cosine'")
+        if item_architecture not in {"feature_hybrid", "gated_feature_hybrid"}:
+            raise ValueError(
+                "item_architecture must be 'feature_hybrid' or 'gated_feature_hybrid'"
+            )
         self.user_tower = UserTower(
-            num_users, embedding_dim, normalize_embeddings, architecture="mlp"
+            num_users,
+            embedding_dim,
+            normalize_embeddings,
+            architecture=user_architecture,
         )
-        self.item_tower = HybridItemTower(
+        item_tower_type = (
+            GatedHybridItemTower
+            if item_architecture == "gated_feature_hybrid"
+            else HybridItemTower
+        )
+        self.item_tower = item_tower_type(
             feature_matrix, embedding_dim, normalize_embeddings
         )
         self.temperature = temperature
         self.normalize_embeddings = normalize_embeddings
         self.similarity = similarity
-        self.architecture = "feature_hybrid"
+        self.architecture = item_architecture
+        self.item_architecture = item_architecture
+        self.user_architecture = user_architecture
 
     @property
     def num_items(self) -> int:
