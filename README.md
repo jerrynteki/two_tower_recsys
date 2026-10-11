@@ -35,14 +35,21 @@ the positive movie against 64 sampled unseen movies and uses cross-entropy to
 rank the positive first.
 
 The trainer supports `mlp`, `embedding`, and `residual_mlp` ID-only models, plus
-`feature_hybrid`, which adds a projected movie ID embedding to a projected movie
-metadata embedding. For the hybrid model, prepare genre and release-year
-features first:
+`feature_hybrid` and `gated_feature_hybrid` item towers. Both combine a movie-ID
+embedding with projected genre/year features; the gated version learns the
+relative weight of the two vectors. Prepare movie features first:
 
 ```bash
 python -m features.prepare_movie_features
-python -m training.train --architecture feature_hybrid
+python -m training.train \
+  --item-tower gated_feature_hybrid \
+  --user-tower embedding
 ```
+
+`--item-tower` selects the item tower and `--user-tower` selects the user tower
+used with `feature_hybrid`. The user tower accepts
+`embedding`, `mlp`, or `residual_mlp`. Both flags accept their previous names
+(`--architecture` and `--user-architecture`) as aliases.
 
 ## Setup
 
@@ -115,6 +122,41 @@ The evaluator reports multi-positive Recall@K and NDCG@K, plus random and
 popularity reference rankings. Use `--no-baselines` to report only the trained
 two-tower model.
 
+## LightGCN
+
+LightGCN represents the training interactions as a user-movie bipartite graph.
+It repeatedly averages neighboring embeddings across graph layers, then scores
+user-movie pairs with an inner product. Unlike the two-tower models above, it
+uses BPR pairwise ranking loss and learns collaborative signals through graph
+propagation. The graph is built from training interactions only.
+
+Train a 64-dimensional, three-layer LightGCN with BPR:
+
+```bash
+python -m training.train_lightgcn \
+  --processed-dir data/processed-1m \
+  --output checkpoints/lightgcn_ml1m_d64_l3_lr0p001_reg1e-4_b4096_s42.pt \
+  --epochs 100 \
+  --batch-size 4096 \
+  --embedding-dim 64 \
+  --layers 3 \
+  --learning-rate 0.001 \
+  --regularization 0.0001 \
+  --patience 10 \
+  --seed 42
+```
+
+The trainer selects the checkpoint by validation NDCG@10. Evaluate its test
+metrics after training:
+
+```bash
+python -m evaluation.evaluate_lightgcn \
+  --checkpoint checkpoints/lightgcn_ml1m_d64_l3_lr0p001_reg1e-4_b4096_s42.pt \
+  --processed-dir data/processed-1m \
+  --split test \
+  --ks 10 20
+```
+
 ## Experiments and retrieval
 
 Repeat a selected configuration across seeds:
@@ -149,15 +191,20 @@ python -m retrieval.retrieve --user-id 1 --top-k 10
 `IndexFlatIP` performs exact inner-product search. Since both vectors are
 L2-normalized, this is cosine similarity.
 
-## Current reference result
+## Latest completed test results
 
-The saved single-seed run selected epoch 10 by validation NDCG@10. Its held-out
-test metrics on the 80/10/10 split were:
+These runs use the same held-out test split from `data/processed-1m`; test
+evaluation masks both training and validation interactions. Each result is a
+single seed, so treat it as an initial comparison rather than a multi-seed
+estimate.
 
-| Ranking | Recall@10 | NDCG@10 | Recall@20 | NDCG@20 |
-| --- | ---: | ---: | ---: | ---: |
-| Random | 0.0032 | 0.0036 | 0.0067 | 0.0047 |
-| Popularity | 0.0905 | 0.0980 | 0.1457 | 0.1110 |
-| Two-tower | 0.1604 | 0.1744 | 0.2421 | 0.1924 |
+| Model (seed 42) | Best epoch | Validation NDCG@10 | Test Recall@10 | Test NDCG@10 | Test Recall@20 | Test NDCG@20 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Gated feature-hybrid (128d, embedding user tower) | 45 | 0.2049 | 0.2202 | 0.2364 | 0.3194 | 0.2567 |
+| LightGCN (64d, 3 layers) | 100 | 0.1546 | 0.1623 | 0.1812 | 0.2448 | 0.1986 |
 
-This is one seed; use the multi-seed experiment for a more stable estimate.
+The gated feature-hybrid run used learning rate 0.1, temperature 0.15,
+64 negatives, and batch size 256. LightGCN used learning rate 0.001,
+regularization 0.0001, and batch size 4096. LightGCN's best validation epoch
+was the 100-epoch limit, so it may need a longer run before treating it as a
+fully tuned baseline.
